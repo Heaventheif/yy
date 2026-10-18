@@ -1,508 +1,276 @@
-"""بوابة API عامة (بلا مفاتيح) لاستخراج روابط التنزيل وتمريرها.
+"""Vercel entry point for the Arabic social-media media resolver."""
+from __future__ import annotations
 
-  GET  /api/v1/resolve?url=…     رابط واحد -> JSON
-  POST /api/v1/batch             حتى 10 روابط بالتوازي -> JSON أو NDJSON متدفق (?stream=1)
-  GET  /api/v1/download?url=…    تمرير الملف (Range / HEAD / redirect=1)
-  GET  /api/v1/health            الحالة والحدود
-
-تجنّب N+1: كل رابط يُستخرج مرة واحدة (كاش + دمج الطلبات المتزامنة المتطابقة + كاش سلبي للفشل)،
-والدفعات تعمل بالتوازي بدل طلب لكل رابط. التفاصيل في API.md.
-"""
-import html as _html
+import json
 import os
 import re
-import sys
-import uuid
-import socket
-import ipaddress
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout, as_completed
-from urllib.parse import parse_qsl, quote, urljoin, urlsplit
-import json
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import quote, urljoin, urlsplit
 
 import requests
-import yt_dlp
 from flask import Flask, Response, g, jsonify, redirect, request
 
-# Vercel: نظام الملفات للقراءة فقط عدا /tmp
+from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
+from socialdl.platforms import PLATFORMS, clean_url, is_public_url
+from socialdl.service import resolve_media
+
 os.environ.setdefault("HOME", "/tmp")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/.cache")
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 app.json.sort_keys = False
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024
 
-# ---------------------------- الإعدادات (كلها اختيارية) ----------------------------
-def _int(name, default):
+
+def _int_env(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, default))
-    except ValueError:
-        return int(default)
+        return max(0, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
 
 
-VERSION = "1"
-REDIRECT = os.getenv("REDIRECT", "0") == "1"             # الافتراضي لـ download: 302 للرابط المباشر
-ALLOW_GENERIC = os.getenv("ALLOW_GENERIC", "0") == "1"
-RATE_LIMIT = _int("RATE_LIMIT_PER_MIN", 60)              # وحدات resolve/batch لكل IP في الدقيقة (0 = معطّل)
-DL_RATE_LIMIT = _int("DL_RATE_LIMIT_PER_MIN", 20)        # بدايات التنزيل لكل IP في الدقيقة
-BATCH_MAX = _int("BATCH_MAX", 10)
-EXTRACT_TIMEOUT = _int("EXTRACT_TIMEOUT_SEC", 30)
-MAX_PENDING = _int("MAX_PENDING_EXTRACTIONS", 24)        # فوقه: 503 مع Retry-After
-CACHE_TTL = _int("CACHE_TTL_SEC", 120)
-NEG_TTL = 15                                             # كاش الفشل (يمنع إعادة المحاولة المحمومة)
-CACHE_MAX = 128
-MAX_URL_LEN = 2048
-CHUNK = 256 * 1024
+VERSION = "2"
+RATE_LIMIT = _int_env("RATE_LIMIT_PER_MIN", 60)
+DL_RATE_LIMIT = _int_env("DL_RATE_LIMIT_PER_MIN", 20)
+BATCH_MAX = min(10, max(1, _int_env("BATCH_MAX", 8)))
+CACHE_TTL_PUBLIC = _int_env("CACHE_TTL_SEC", 75)
+REDIRECT_DEFAULT = os.getenv("REDIRECT", "0") == "1"
 CORS_ORIGIN = os.getenv("CORS_ORIGIN", "*")
+CHUNK_SIZE = 256 * 1024
 
-BLOCKED_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com", "googlevideo.com", "ytimg.com")
-FORMAT = "b[protocol=https]/b[protocol=http]/ba[protocol=https]/ba[protocol=http]"
-
-_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
-_BARE_RE = re.compile(r"^[\w-]+(\.[\w-]+)+(/\S*)?$")
-
-
-class ApiError(Exception):
-    def __init__(self, code, message, status=400, retry_after=None, detail=None):
-        super().__init__(message)
-        self.code, self.message, self.status, self.retry_after = code, message, status, retry_after
-        self.detail = detail
+_BUCKETS: dict[tuple[str, str], tuple[float, float]] = {}
+_BUCKET_LOCK = threading.Lock()
+_BATCH_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="batch")
 
 
-# ---------------------------- الروابط والأمان ----------------------------
-def _host_blocked(host):
-    host = (host or "").lower().rstrip(".")
-    return any(host == h or host.endswith("." + h) for h in BLOCKED_HOSTS)
+def _safe_request_id(value: str | None) -> str:
+    value = re.sub(r"[^A-Za-z0-9_-]", "", value or "")[:64]
+    return value or uuid.uuid4().hex[:16]
 
 
-def is_public(url):
-    """منع SSRF: http(s) فقط، وكل عناوين المضيف عامة."""
-    try:
-        parts = urlsplit(url)
-        host = parts.hostname
-        if parts.scheme not in ("http", "https") or not host:
-            return False
-        addrs = {ai[4][0] for ai in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
-        for a in addrs:
-            ip = ipaddress.ip_address(a.split("%")[0])
-            if ip.version == 6 and ip.ipv4_mapped:
-                ip = ip.ipv4_mapped
-            if not ip.is_global:
-                return False
-        return bool(addrs)
-    except (OSError, ValueError):
-        return False
+def _client_ip() -> str:
+    headers = request.headers
+    return (headers.get("X-Vercel-Forwarded-For", "").split(",")[0].strip()
+            or headers.get("X-Real-IP", "").strip()
+            or request.remote_addr or "unknown")
 
 
-def clean_url(raw):
-    """أول رابط في النص (يقبل نص المشاركة، أو دومين بلا https)."""
-    raw = (raw or "").strip() if isinstance(raw, str) else ""
-    if not raw or len(raw) > MAX_URL_LEN or any(ord(c) < 32 for c in raw):
-        raise ApiError("invalid_url", "الرابط غير صحيح")
-    m = _URL_RE.search(raw)
-    if m:
-        url = m.group(0).rstrip(".,;)!?")
-    elif _BARE_RE.match(raw):
-        url = "https://" + raw
-    else:
-        raise ApiError("invalid_url", "الرابط غير صحيح")
-    try:
-        parts = urlsplit(url)
-        host = parts.hostname or ""
-        if parts.username is not None or parts.password is not None or not host:
-            raise ValueError
-    except ValueError:
-        raise ApiError("invalid_url", "الرابط غير صحيح")
-    if _host_blocked(host):
-        raise ApiError("blocked_site", "تنزيل يوتيوب غير مدعوم")
-    if not is_public(url):
-        raise ApiError("forbidden_url", "الرابط غير مسموح")
-    return url
-
-
-# ---------------------------- تحديد المعدل (token bucket لكل IP) ----------------------------
-_buckets = {}
-_rl_lock = threading.Lock()
-
-
-def client_ip():
-    h = request.headers
-    ip = (h.get("X-Vercel-Forwarded-For") or h.get("X-Real-IP") or
-          (h.get("X-Forwarded-For") or "").split(",")[0].strip() or request.remote_addr or "?")
-    return ip.strip()
-
-
-def rate_check(kind, limit, cost=1):
-    """يستهلك cost من حصة IP. يرجع (limit, remaining, reset_sec) أو يرمي 429."""
+def _rate_check(kind: str, limit: int, cost: int = 1) -> None:
     if limit <= 0:
-        return None
-    now, key = time.monotonic(), (kind, client_ip())
+        return
+    now = time.monotonic()
+    key = (kind, _client_ip())
     rate = limit / 60.0
-    with _rl_lock:
-        if len(_buckets) > 5000:
-            for k in [k for k, (t, ts) in _buckets.items() if now - ts > 120][:2500] or list(_buckets)[:1000]:
-                _buckets.pop(k, None)
-        tokens, ts = _buckets.get(key, (float(limit), now))
-        tokens = min(float(limit), tokens + (now - ts) * rate)
+    with _BUCKET_LOCK:
+        if len(_BUCKETS) > 5000:
+            expired = [k for k, (_, touched) in _BUCKETS.items() if now - touched > 120]
+            for old in expired[:2500] or list(_BUCKETS)[:500]:
+                _BUCKETS.pop(old, None)
+        tokens, _ = _BUCKETS.get(key, (float(limit), now))
+        tokens = min(float(limit), tokens + (now - _BUCKETS.get(key, (0.0, now))[1]) * rate)
         if tokens < cost:
             wait = max(1, int((cost - tokens) / rate) + 1)
-            _buckets[key] = (tokens, now)
-            g.rl = (limit, 0, wait)
-            raise ApiError("rate_limited", "طلبات كثيرة، أعد المحاولة بعد قليل", 429, retry_after=wait)
+            _BUCKETS[key] = (tokens, now)
+            g.rate_limit = (limit, 0, wait)
+            raise ApiError("rate_limited", "تجاوزت حد الطلبات المؤقت؛ أعد المحاولة لاحقًا.", 429, retry_after=wait)
         tokens -= cost
-        _buckets[key] = (tokens, now)
-    reset = int((limit - tokens) / rate) + 1
-    g.rl = (limit, int(tokens), reset)
-    return g.rl
+        reset = int((limit - tokens) / rate) + 1
+        _BUCKETS[key] = (tokens, now)
+        g.rate_limit = (limit, int(tokens), reset)
 
 
-# ---------------------------- الاستخراج: كاش + دمج الطلبات + مهلة ----------------------------
-_cache = {}          # url -> (ts, ttl, media | ApiError)
-_inflight = {}       # url -> Future   (singleflight)
-_lock = threading.Lock()
-_pending = threading.BoundedSemaphore(MAX_PENDING)
-_EXTRACT_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="extract")
-_BATCH_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="batch")
-
-
-def _opts():
-    allowed = ["default", "-.*youtube.*"]
-    if not ALLOW_GENERIC:
-        allowed.append("-generic")
-    opts = {
-        "quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True,
-        "playlist_items": "1", "format": FORMAT, "cachedir": False, "ignoreconfig": True,
-        "socket_timeout": 15, "retries": 2, "extractor_retries": 1, "color": "never",
-        "allowed_extractors": allowed,
-    }
-    if os.getenv("PROXY"):
-        opts["proxy"] = os.getenv("PROXY")
-    return opts
-
-
-def _friendly(e):
-    m = str(e).lower()
-    if "unsupported url" in m or "no suitable extractor" in m:
-        return ("unsupported", "الموقع أو الرابط غير مدعوم", 422)
-    if any(k in m for k in ("log in", "login", "sign in", "private video", "members-only",
-                            "confirm your age", "age-restricted", "cookies")):
-        return ("private", "المحتوى خاص أو يتطلب تسجيل دخول", 422)
-    if any(k in m for k in ("http error 404", "not found", "has been removed", "video unavailable",
-                            "does not exist")):
-        return ("not_found", "المحتوى غير موجود أو محذوف", 404)
-    if "requested format is not available" in m or "no video formats" in m:
-        return ("no_format", "لا يوجد ملف قابل للتنزيل المباشر لهذا الرابط", 422)
-    return ("extract_failed", "تعذر استخراج رابط التنزيل", 502)
-
-
-_SHORT_HOSTS = {"fb.watch", "fb.me", "bit.ly", "t.co", "tinyurl.com", "is.gd", "ow.ly", "buff.ly", "goo.gl",
-                "vm.tiktok.com", "vt.tiktok.com", "pin.it", "redd.it", "lnkd.in"}
-_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-               "Chrome/124.0.0.0 Safari/537.36")
-
-
-def _needs_expand(url):
-    """روابط المشاركة/الاختصار لا يطابقها yt-dlp قبل فكّ التحويل (مثل facebook.com/share/v/ID)."""
-    try:
-        p = urlsplit(url)
-    except ValueError:
-        return False
-    host, path = (p.hostname or "").lower().rstrip("."), p.path
-    return (host in _SHORT_HOSTS
-            or (host.endswith(("facebook.com", "instagram.com")) and path.startswith("/share"))
-            or (host.endswith("tiktok.com") and path.startswith("/t/"))
-            or (host.endswith("reddit.com") and "/s/" in path))
-
-
-_FB_UAS = (_BROWSER_UA, "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)")
-_META_URL = re.compile(r"""<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)["']|"""
-                       r"""<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:url["']|"""
-                       r"""<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']""", re.I)
-_FB_VIDEO_ID = re.compile(r'"(?:video_id|videoId)"\s*:\s*"(\d{6,})"')
-
-
-def _page_target(body, base):
-    """رابط الفيديو الحقيقي من صفحة المشاركة: og:url / canonical، ثم معرّف الفيديو."""
-    for m in _META_URL.finditer(body or ""):
-        cand = urljoin(base, _html.unescape(next(g for g in m.groups() if g)))
-        path = urlsplit(cand).path
-        if cand.rstrip("/") != base.rstrip("/") and not path.startswith(("/share", "/login")) and path not in ("", "/"):
-            return cand
-    m = _FB_VIDEO_ID.search(body or "")
-    if m and "facebook.com" in base:
-        return f"https://www.facebook.com/watch/?v={m.group(1)}"
-    return None
-
-
-def _is_social(url):
-    host = (urlsplit(url).hostname or "").lower()
-    return host.endswith(("facebook.com", "instagram.com", "fb.watch", "fb.me"))
-
-
-def _hop(url):
-    """قفزة واحدة: Location، وإلا (لفيسبوك/إنستغرام) تحليل الصفحة بمتصفح ثم بزاحف فيسبوك."""
-    social = _is_social(url)
-    for ua in (_FB_UAS if social else _FB_UAS[:1]):
-        try:
-            r = requests.get(url, headers={"User-Agent": ua, "Accept-Language": "en-US,en;q=0.8"},
-                             stream=True, allow_redirects=False, timeout=(8, 10))
-        except requests.RequestException:
-            continue
-        try:
-            loc = r.headers.get("Location")
-            if r.status_code in (301, 302, 303, 307, 308) and loc:
-                return urljoin(url, loc)
-            if r.status_code == 200 and social:
-                body = r.raw.read(300_000, decode_content=True).decode("utf-8", "ignore")
-                target = _page_target(body, url)
-                if target:
-                    return target
-        finally:
-            r.close()
-    return None
-
-
-def expand_url(url, hops=6):
-    """يفك روابط المشاركة/الاختصار (كل قفزة تُفحص ضد SSRF والمواقع المحجوبة)."""
-    cur = url
-    for _ in range(hops):
-        if not _needs_expand(cur):
-            return cur
-        nxt = _hop(cur)
-        if not nxt:
-            return cur
-        q = dict(parse_qsl(urlsplit(nxt).query))
-        if urlsplit(nxt).path.startswith("/login") and q.get("next"):   # فيسبوك: تحويل لصفحة الدخول
-            nxt = q["next"]
-        if _host_blocked(urlsplit(nxt).hostname):
-            raise ApiError("blocked_site", "تنزيل يوتيوب غير مدعوم")
-        if not is_public(nxt):
-            raise ApiError("forbidden_url", "الرابط غير مسموح", 403)
-        cur = nxt
-    return cur
-
-
-def _extract(url):
-    try:
-        orig, url = url, expand_url(url)
-        with yt_dlp.YoutubeDL(_opts()) as ydl:
-            info = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.YoutubeDLError as e:
-        code, msg, status = _friendly(e)
-        detail = re.sub(r"^ERROR:\s*", "", str(e)).strip()[:300]
-        if url != orig:
-            detail = f"{detail} [expanded: {url}]"
-        print(f"[extract] {code} {orig} :: {detail}", file=sys.stderr, flush=True)
-        raise ApiError(code, msg, status, detail=detail)
-    finally:
-        _pending.release()
-    if info and info.get("_type") == "playlist":
-        info = next((x for x in (info.get("entries") or []) if x), None)
-    if info and info.get("requested_formats"):   # يتطلب دمجا: غير مدعوم
-        info = None
-    media = info and info.get("url")
-    if not media or (info.get("protocol") or "https") not in ("http", "https"):
-        raise ApiError("no_format", "لا يوجد ملف قابل للتنزيل المباشر لهذا الرابط", 422)
-    if (info.get("extractor_key") or "").lower().startswith("youtube") or not is_public(media):
-        raise ApiError("forbidden_url", "الرابط غير مسموح", 403)
-    headers = {k: v for k, v in (info.get("http_headers") or {}).items() if k.lower() != "accept-encoding"}
-    return {"title": info.get("title") or "download", "ext": info.get("ext") or "mp4", "url": media,
-            "headers": headers, "size": info.get("filesize") or info.get("filesize_approx"),
-            "duration": info.get("duration"), "thumbnail": info.get("thumbnail"),
-            "site": info.get("extractor_key")}
-
-
-def _run_extract(url):
-    if not _pending.acquire(blocking=False):
-        raise ApiError("busy", "الخدمة مشغولة، أعد المحاولة بعد لحظات", 503, retry_after=3)
-    fut = _EXTRACT_POOL.submit(_extract, url)
-    try:
-        return fut.result(timeout=EXTRACT_TIMEOUT)
-    except FutureTimeout:
-        raise ApiError("timeout", "استغرق الاستخراج وقتا أطول من المسموح", 504, retry_after=5)
-
-
-def resolve(url, fresh=False):
-    """استخراج واحد لكل رابط مهما تكرر الطلب: كاش، ثم دمج المتزامن، ثم كاش سلبي للفشل."""
-    now = time.time()
-    with _lock:
-        hit = _cache.get(url)
-        if hit and not fresh and now - hit[0] < hit[1]:
-            if isinstance(hit[2], ApiError):
-                raise hit[2]
-            return hit[2]
-        fut = _inflight.get(url)
-        owner = fut is None
-        if owner:
-            fut = _inflight[url] = Future()
-    if not owner:
-        try:
-            return fut.result(timeout=EXTRACT_TIMEOUT + 5)
-        except FutureTimeout:
-            raise ApiError("timeout", "استغرق الاستخراج وقتا أطول من المسموح", 504, retry_after=5)
-    try:
-        media, ttl = _run_extract(url), CACHE_TTL
-        result = media
-    except ApiError as e:
-        media, ttl, result = e, (0 if e.status >= 500 and e.code in ("busy", "timeout") else NEG_TTL), e
-    except Exception as e:           # خطأ غير متوقع: لا يُخزَّن
-        result, media, ttl = e, e, 0
-    with _lock:
-        if ttl:
-            if len(_cache) >= CACHE_MAX:
-                _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
-            _cache[url] = (now, ttl, media)
-        _inflight.pop(url, None)
-    if isinstance(result, Exception):
-        fut.set_exception(result)
-        raise result
-    fut.set_result(result)
-    return result
-
-
-# ---------------------------- التمرير ----------------------------
-def _open_upstream(media, rng):
-    """يفتح المصدر مع تتبع التحويلات يدويا (كل قفزة تُفحص ضد SSRF)."""
-    headers = dict(media["headers"])
-    if rng:
-        headers["Range"] = rng
-    target = media["url"]
-    for _ in range(5):
-        up = requests.get(target, headers=headers, stream=True, timeout=(10, 30), allow_redirects=False)
-        if up.status_code in (301, 302, 303, 307, 308) and up.headers.get("Location"):
-            target = urljoin(target, up.headers["Location"])
-            up.close()
-            if not is_public(target):
-                raise ApiError("forbidden_url", "الرابط غير مسموح", 403)
-            continue
-        return up
-    raise ApiError("upstream_error", "تحويلات كثيرة من المصدر", 502)
-
-
-def _filename(media):
-    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", media["title"]).strip(" .")[:120] or "download"
-    ext = re.sub(r"[^\w]", "", media["ext"]) or "bin"
-    name = f"{title}.{ext}"
-    ascii_name = re.sub(r"[^\x20-\x7e]", "_", name).replace('"', "'")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
-
-
-def _stream(up):
-    try:
-        for piece in up.iter_content(CHUNK):
-            if piece:
-                yield piece
-    finally:
-        up.close()
-
-
-def _base():
+def _base_url() -> str:
     proto = request.headers.get("X-Forwarded-Proto", request.scheme).split(",")[0].strip()
     return f"{proto}://{request.host}"
 
 
-def _public(url, media, base):
-    """الشكل العام لنتيجة ناجحة"""
-    return {"ok": True, "input": url, "title": media["title"], "ext": media["ext"], "size": media["size"],
-            "duration": media["duration"], "thumbnail": media["thumbnail"], "site": media["site"],
-            "download": f"{base}/api/v1/download?url={quote(url, safe='')}",
-            "source": {"url": media["url"], "headers": media["headers"]}}
+def _error_body(error: ApiError) -> dict:
+    detail = {"code": error.code, "message": error.message}
+    if error.upstream_status is not None:
+        detail["upstream_status"] = error.upstream_status
+    return {"ok": False, "error": detail, "request_id": g.get("request_id", "")}
 
 
-def _error_body(e):
-    err = {"code": e.code, "message": e.message}
-    if getattr(e, "detail", None):
-        err["detail"] = e.detail          # السبب التقني (للتشخيص)
-    return {"ok": False, "error": err}
+def _json(body: dict, status: int = 200, retry_after: int | None = None):
+    response = jsonify(body)
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    if retry_after:
+        response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
-# ---------------------------- الهيدرات المشتركة / CORS / الأخطاء ----------------------------
+def _public(url: str, media: dict, base_url: str | None = None) -> dict:
+    base_url = base_url or _base_url()
+    return {
+        "ok": True,
+        "input": url,
+        "title": media["title"],
+        "ext": media["ext"],
+        "size": media["size"],
+        "duration": media["duration"],
+        "site": media["site"],
+        "download": f"{base_url}/api/v1/download?url={quote(url, safe='')}",
+        "expires_in": CACHE_TTL_PUBLIC,
+    }
+
+
+def _filename(media: dict) -> str:
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(media.get("title") or "download")).strip(" .")[:120]
+    ext = re.sub(r"[^A-Za-z0-9]", "", str(media.get("ext") or "mp4")) or "bin"
+    name = f"{title or 'download'}.{ext}"
+    ascii_name = re.sub(r"[^\x20-\x7e]", "_", name).replace('"', "'")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
+
+
+def _open_upstream(media: dict, range_header: str | None, method: str = "GET"):
+    headers = dict(media.get("headers") or {})
+    if range_header:
+        headers["Range"] = range_header
+    target = media["url"]
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        for _ in range(6):
+            if not is_public_url(target):
+                raise ApiError("forbidden_url", "رفضت الخدمة وجهة تنزيل غير عامة أو غير آمنة.", 403)
+            try:
+                upstream = session.request(
+                    method, target, headers=headers, stream=True,
+                    allow_redirects=False, timeout=(10, 35),
+                )
+            except requests.RequestException as exc:
+                raise classify_extractor_error(exc) from None
+            location = upstream.headers.get("Location")
+            if upstream.status_code in (301, 302, 303, 307, 308) and location:
+                candidate = urljoin(target, location)
+                upstream.close()
+                if not is_public_url(candidate):
+                    raise ApiError("forbidden_url", "رفضت الخدمة وجهة تحويل غير عامة أو غير آمنة.", 403)
+                target = candidate
+                continue
+            return upstream, session
+        raise ApiError("upstream_redirects", "أعاد مصدر الوسائط تحويلات كثيرة.", 502)
+    except Exception:
+        session.close()
+        raise
+
+
+def _stream(upstream, session):
+    try:
+        for chunk in upstream.iter_content(CHUNK_SIZE):
+            if chunk:
+                yield chunk
+    finally:
+        upstream.close()
+        session.close()
+
+
 @app.before_request
-def _begin():
-    g.rid = request.headers.get("X-Request-Id", "")[:64] or uuid.uuid4().hex[:16]
-    g.t0 = time.perf_counter()
-    g.rl = None
+def _begin_request():
+    g.request_id = _safe_request_id(request.headers.get("X-Request-Id"))
+    g.started_at = time.perf_counter()
+    g.rate_limit = None
 
 
 @app.after_request
-def _headers(resp):
-    resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["Referrer-Policy"] = "no-referrer"
+def _security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
     if request.path.startswith("/api/"):
-        resp.headers["X-Request-Id"] = g.get("rid", "")
-        resp.headers["Access-Control-Allow-Origin"] = CORS_ORIGIN
-        resp.headers["Access-Control-Allow-Methods"] = "GET, HEAD, POST, OPTIONS"
-        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Range, X-Request-Id"
-        resp.headers["Access-Control-Expose-Headers"] = (
+        response.headers["X-Request-Id"] = g.get("request_id", "")
+        response.headers["Access-Control-Allow-Origin"] = CORS_ORIGIN
+        response.headers["Access-Control-Allow-Methods"] = "GET, HEAD, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Range, X-Request-Id"
+        response.headers["Access-Control-Expose-Headers"] = (
             "Content-Disposition, Content-Length, Content-Range, Accept-Ranges, Retry-After, "
-            "RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, X-Request-Id, Server-Timing")
-        resp.headers["Access-Control-Max-Age"] = "86400"
+            "RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset, X-Request-Id")
+        response.headers["Access-Control-Max-Age"] = "86400"
         if CORS_ORIGIN != "*":
-            resp.headers["Vary"] = "Origin"
-        rl = g.get("rl")
-        if rl:
-            resp.headers["RateLimit-Limit"], resp.headers["RateLimit-Remaining"], resp.headers["RateLimit-Reset"] = map(str, rl)
-        resp.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - g.t0) * 1000:.0f}"
-    return resp
-
-
-def _json(body, status=200, retry_after=None):
-    resp = jsonify(body)
-    resp.status_code = status
-    resp.headers["Cache-Control"] = "no-store"
-    if retry_after:
-        resp.headers["Retry-After"] = str(retry_after)
-    return resp
+            response.headers["Vary"] = "Origin"
+        limits = g.get("rate_limit")
+        if limits:
+            response.headers["RateLimit-Limit"], response.headers["RateLimit-Remaining"], response.headers["RateLimit-Reset"] = map(str, limits)
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - g.started_at) * 1000:.0f}"
+    return response
 
 
 @app.errorhandler(ApiError)
-def _api_error(e):
-    return _json(_error_body(e), e.status, e.retry_after)
+def _handle_api_error(error: ApiError):
+    if error.upstream_status:
+        try:
+            parsed = urlsplit(request.args.get("url", ""))
+            host = parsed.hostname or "unknown"
+        except ValueError:
+            host = "unknown"
+        app.logger.warning("[%s] upstream status=%s host=%s code=%s", g.get("request_id"),
+                           error.upstream_status, host, error.code)
+    return _json(_error_body(error), error.status, error.retry_after)
+
+
+@app.errorhandler(413)
+def _too_large(_error):
+    error = ApiError("request_too_large", "حجم الطلب أكبر من الحد المسموح.", 413)
+    return _json(_error_body(error), 413)
 
 
 @app.errorhandler(404)
-def _nf(e):
-    return _json(_error_body(ApiError("not_found", "المسار غير موجود", 404)), 404)
+def _not_found(_error):
+    return _json(_error_body(ApiError("not_found", "المسار غير موجود.", 404)), 404)
 
 
 @app.errorhandler(405)
-def _na(e):
-    return _json(_error_body(ApiError("method_not_allowed", "الطريقة غير مسموحة", 405)), 405)
+def _method_not_allowed(_error):
+    return _json(_error_body(ApiError("method_not_allowed", "طريقة الطلب غير مدعومة.", 405)), 405)
 
 
 @app.errorhandler(Exception)
-def _any_error(e):
-    app.logger.exception("[%s] unhandled: %s", g.get("rid"), e)
-    return _json(_error_body(ApiError("internal", "حدث خطأ غير متوقع", 500)), 500)
+def _unexpected(error):
+    app.logger.error("[%s] unexpected exception type=%s", g.get("request_id"), type(error).__name__)
+    return _json(_error_body(ApiError("internal", "حدث خطأ غير متوقع؛ أرسل رقم الطلب للدعم.", 500)), 500)
 
 
-# ---------------------------- المسارات ----------------------------
 @app.get("/api/v1/health")
 def health():
-    return _json({"ok": True, "version": VERSION,
-                  "limits": {"rate_per_min": RATE_LIMIT, "download_starts_per_min": DL_RATE_LIMIT,
-                             "batch_max": BATCH_MAX, "extract_timeout_sec": EXTRACT_TIMEOUT}})
+    return _json({
+        "ok": True,
+        "version": VERSION,
+        "youtube": "disabled",
+        "platforms": list(PLATFORMS),
+        "limits": {
+            "resolve_per_minute": RATE_LIMIT,
+            "download_starts_per_minute": DL_RATE_LIMIT,
+            "batch_max": BATCH_MAX,
+            "extract_timeout_sec": int(os.getenv("EXTRACT_TIMEOUT_SEC", "28")),
+        },
+    })
 
 
 @app.get("/api/v1/resolve")
 def api_resolve():
-    rate_check("r", RATE_LIMIT, 1)
+    _rate_check("resolve", RATE_LIMIT)
     url = clean_url(request.args.get("url"))
-    return _json(_public(url, resolve(url), _base()))
+    media = resolve_media(url, fresh=request.args.get("fresh") == "1")
+    return _json(_public(url, media))
 
 
-def _one(raw, base):
-    """نتيجة عنصر واحد في الدفعة (لا ترمي أبدا)"""
+def _batch_one(index: int, raw: object, base_url: str) -> tuple[int, dict]:
     try:
-        url = clean_url(raw)
-        return _public(url, resolve(url), base)
-    except ApiError as e:
-        return {"ok": False, "input": raw if isinstance(raw, str) else None, **_error_body(e)}
-    except Exception as e:
-        app.logger.exception("batch item failed: %s", e)
-        return {"ok": False, "input": raw if isinstance(raw, str) else None,
-                **_error_body(ApiError("internal", "حدث خطأ غير متوقع", 500))}
+        url = clean_url(raw if isinstance(raw, str) else None)
+        media = resolve_media(url)
+        return index, _public(url, media, base_url)
+    except ApiError as error:
+        return index, {"ok": False, "input": raw if isinstance(raw, str) else None,
+                       "error": {"code": error.code, "message": error.message,
+                                 **({"upstream_status": error.upstream_status} if error.upstream_status is not None else {})}}
+    except Exception:
+        return index, {"ok": False, "input": raw if isinstance(raw, str) else None,
+                       "error": {"code": "internal", "message": "تعذر معالجة هذا الرابط."}}
 
 
 @app.post("/api/v1/batch")
@@ -510,62 +278,89 @@ def api_batch():
     body = request.get_json(silent=True)
     urls = body.get("urls") if isinstance(body, dict) else None
     if not isinstance(urls, list) or not urls:
-        raise ApiError("invalid_request", 'الجسم يجب أن يكون {"urls": ["…"]}')
+        raise ApiError("invalid_request", 'أرسل JSON بالشكل {"urls": ["رابط"]}.', 400)
     if len(urls) > BATCH_MAX:
-        raise ApiError("too_many_urls", f"الحد الأقصى {BATCH_MAX} روابط في الطلب", 413)
-    unique = list(dict.fromkeys(u if isinstance(u, str) else "" for u in urls))   # بلا تكرار
-    rate_check("r", RATE_LIMIT, len(unique))
-    base = _base()                     # يُحسب هنا: الخيوط الفرعية بلا سياق طلب
-    futs = {_BATCH_POOL.submit(_one, u, base): i for i, u in enumerate(unique)}
-    if request.args.get("stream") == "1" or "ndjson" in request.headers.get("Accept", ""):
-        def lines():                       # كل سطر يخرج فور جاهزيته (لا انتظار لأبطأ رابط)
-            for f in as_completed(futs):
-                yield json.dumps({"index": futs[f], **f.result()}, ensure_ascii=False) + "\n"
-        resp = Response(lines(), mimetype="application/x-ndjson")
-        resp.headers["Cache-Control"] = "no-store"
-        resp.headers["X-Accel-Buffering"] = "no"
-        return resp
-    results = [None] * len(unique)
-    for f, i in futs.items():
-        results[i] = f.result()
+        raise ApiError("too_many_urls", f"الحد الأقصى للدفعة هو {BATCH_MAX} رابطًا.", 413)
+    cost = len({value for value in urls if isinstance(value, str)})
+    _rate_check("resolve", RATE_LIMIT, max(cost, 1))
+
+    base_url = _base_url()
+    futures = {_BATCH_POOL.submit(_batch_one, index, raw, base_url): index for index, raw in enumerate(urls)}
+    streaming = request.args.get("stream") == "1" or "ndjson" in request.headers.get("Accept", "").lower()
+    if streaming:
+        def lines():
+            for future in as_completed(futures):
+                index, result = future.result()
+                yield json.dumps({"index": index, **result}, ensure_ascii=False) + "\n"
+        response = Response(lines(), mimetype="application/x-ndjson")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
+
+    results = [None] * len(urls)
+    for future in as_completed(futures):
+        index, item = future.result()
+        results[index] = item
     return _json({"ok": True, "count": len(results), "results": results})
 
 
 @app.route("/api/v1/download", methods=["GET", "HEAD"])
 def api_download():
     url = clean_url(request.args.get("url"))
-    rng = request.headers.get("Range")
-    if not rng or re.match(r"^bytes=0-", rng):          # أجزاء الاستئناف اللاحقة لا تُحسب
-        rate_check("d", DL_RATE_LIMIT, 1)
-    media = resolve(url)
-    mode = request.args.get("redirect")
-    if (REDIRECT if mode is None else mode == "1"):
-        resp = redirect(media["url"], 302)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+    range_header = request.headers.get("Range")
+    if range_header and not re.fullmatch(r"bytes=\d*-\d*", range_header.strip()):
+        raise ApiError("invalid_range", "نطاق التنزيل غير صالح.", 416)
+    if not range_header or range_header.startswith("bytes=0-"):
+        _rate_check("download", DL_RATE_LIMIT)
+
+    media = resolve_media(url)
+    redirect_value = request.args.get("redirect")
+    if (REDIRECT_DEFAULT if redirect_value is None else redirect_value == "1"):
+        response = redirect(media["url"], 302)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    upstream = None
+    session = None
     try:
-        up = _open_upstream(media, rng)
-        if up.status_code in (401, 403, 404, 410):      # الرابط المباشر انتهى: استخراج جديد مرة واحدة
-            up.close()
-            media = resolve(url, fresh=True)
-            up = _open_upstream(media, rng)
-    except requests.RequestException:
-        raise ApiError("upstream_error", "تعذر الاتصال بمصدر الملف", 502, retry_after=2)
-    if up.status_code not in (200, 206):
-        code = up.status_code
-        up.close()
-        raise ApiError("upstream_error", f"رفض المصدر الطلب ({code})", 502)
-    out = Response(_stream(up), status=up.status_code,
-                   content_type=up.headers.get("Content-Type") or "application/octet-stream",
-                   direct_passthrough=True)
-    for h in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"):
-        if up.headers.get(h):
-            out.headers[h] = up.headers[h]
-    out.headers.setdefault("Accept-Ranges", "bytes")
-    out.headers["Content-Disposition"] = _filename(media)
-    out.headers["Cache-Control"] = "no-store"
-    out.headers["X-Accel-Buffering"] = "no"
-    return out
+        upstream, session = _open_upstream(media, range_header, request.method)
+        if upstream.status_code in (401, 403, 404, 410):
+            upstream.close()
+            session.close()
+            media = resolve_media(url, fresh=True)
+            upstream, session = _open_upstream(media, range_header, request.method)
+        if upstream.status_code not in (200, 206, 416):
+            raise from_upstream_status(upstream.status_code)
+    except requests.RequestException as error:
+        if upstream is not None:
+            upstream.close()
+        if session is not None:
+            session.close()
+        raise classify_extractor_error(error) from None
+    except Exception:
+        if upstream is not None:
+            upstream.close()
+        if session is not None:
+            session.close()
+        raise
+
+    response = Response(
+        _stream(upstream, session) if request.method == "GET" else b"",
+        status=upstream.status_code,
+        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+        direct_passthrough=True,
+    )
+    for header in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"):
+        if upstream.headers.get(header):
+            response.headers[header] = upstream.headers[header]
+    response.headers.setdefault("Accept-Ranges", "bytes")
+    response.headers["Content-Disposition"] = _filename(media)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Accel-Buffering"] = "no"
+    if request.method == "HEAD":
+        upstream.close()
+        session.close()
+    return response
 
 
 if __name__ == "__main__":
