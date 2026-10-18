@@ -11,25 +11,30 @@
     *{box-sizing:border-box}
     html,body{width:100%;min-width:320px;min-height:100%;margin:0;background:#000}
     body{display:grid;place-items:center;min-height:100vh;padding:20px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-    .bar{display:flex;width:min(720px,100%);height:58px;padding:5px;background:#fff;border-radius:9px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
+    .bar{display:flex;width:min(820px,100%);height:58px;padding:5px;background:#fff;border-radius:9px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
     input{min-width:0;flex:1;padding:0 15px;border:0;outline:0;background:#fff;color:#000;font:15px system-ui;text-align:left;direction:ltr}
     input::placeholder{color:#777}
+    select{height:100%;padding:0 9px;border:0;border-right:1px solid #ddd;outline:0;background:#fff;color:#000;font:13px system-ui;cursor:pointer}
     button,.download{display:inline-flex;align-items:center;justify-content:center;min-width:112px;padding:0 18px;border:0;border-radius:6px;background:#000;color:#fff;font:14px system-ui;cursor:pointer;text-decoration:none}
     button:disabled{opacity:.55;cursor:wait}
     .download{width:100%;font-size:15px}
     .bar[data-state="error"]{outline:2px solid #d33}
     .bar[data-state="loading"] button{cursor:wait}
-    @media(max-width:560px){body{padding:12px}.bar{height:54px}.bar button,.bar .download{min-width:82px;padding:0 10px;font-size:13px}input{padding:0 10px;font-size:13px}}
+    @media(max-width:560px){body{padding:12px}.bar{height:54px}.bar button,.bar .download{min-width:70px;padding:0 8px;font-size:13px}input{padding:0 8px;font-size:13px}select{max-width:76px;padding:0 4px;font-size:11px}}
   </style>
 </head>
 <body>
   <form class="bar" id="bar" autocomplete="off" novalidate>
     <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="ألصق الرابط" aria-label="الرابط" required>
+    <select id="format" aria-label="الصيغة"><option value="video">فيديو</option><option value="audio">صوت MP3</option></select>
+    <select id="quality" aria-label="جودة الصوت"><option value="128">128</option><option value="192" selected>192</option><option value="320">320</option></select>
     <button id="submit" type="submit">تنزيل</button>
   </form>
   <script>
     const bar=document.querySelector('#bar');
     const input=document.querySelector('#url');
+    const format=document.querySelector('#format');
+    const quality=document.querySelector('#quality');
     const submit=document.querySelector('#submit');
     const youtube=/^(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
     const isYoutube=value=>{try{return youtube.test(new URL(value).hostname)}catch{return false}};
@@ -46,6 +51,8 @@
     };
     const setState=(state,text)=>{bar.dataset.state=state;submit.textContent=text;submit.disabled=state==='loading'};
     const showLink=(href)=>{bar.replaceChildren();const link=document.createElement('a');link.className='download';link.href=href;link.textContent='تنزيل';link.setAttribute('download','');bar.append(link)};
+    format.addEventListener('change',()=>{quality.disabled=format.value!=='audio'});
+    quality.disabled=true;
     bar.addEventListener('submit',async event=>{
       event.preventDefault();
       const value=input.value.trim();
@@ -54,6 +61,10 @@
         setState('loading','…');
         try{
           const normalized=normalizeYoutube(value);
+          if(format.value==='audio'){
+            showLink('https://yt-api-2.onrender.com/audio?url='+encodeURIComponent(normalized)+'&quality='+encodeURIComponent(quality.value));
+            return;
+          }
           const response=await fetch('https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl?url='+encodeURIComponent(normalized),{headers:{Accept:'application/json'}});
           const data=await response.json().catch(()=>({}));
           const media=data.result?.video||data.result?.url||data.video||data.url;
