@@ -16,7 +16,7 @@ import ipaddress
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout, as_completed
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlsplit
 import json
 
 import requests
@@ -193,8 +193,55 @@ def _friendly(e):
     return ("extract_failed", "تعذر استخراج رابط التنزيل", 502)
 
 
+_SHORT_HOSTS = {"fb.watch", "fb.me", "bit.ly", "t.co", "tinyurl.com", "is.gd", "ow.ly", "buff.ly", "goo.gl",
+                "vm.tiktok.com", "vt.tiktok.com", "pin.it", "redd.it", "lnkd.in"}
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/124.0.0.0 Safari/537.36")
+
+
+def _needs_expand(url):
+    """روابط المشاركة/الاختصار لا يطابقها yt-dlp قبل فكّ التحويل (مثل facebook.com/share/v/ID)."""
+    try:
+        p = urlsplit(url)
+    except ValueError:
+        return False
+    host, path = (p.hostname or "").lower().rstrip("."), p.path
+    return (host in _SHORT_HOSTS
+            or (host.endswith(("facebook.com", "instagram.com")) and path.startswith("/share"))
+            or (host.endswith("tiktok.com") and path.startswith("/t/"))
+            or (host.endswith("reddit.com") and "/s/" in path))
+
+
+def expand_url(url, hops=6):
+    """يتبع تحويلات 301/302 يدويا (كل قفزة تُفحص ضد SSRF والمواقع المحجوبة)."""
+    cur = url
+    for _ in range(hops):
+        if not _needs_expand(cur):
+            return cur
+        try:
+            r = requests.get(cur, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
+                             stream=True, allow_redirects=False, timeout=(8, 10))
+        except requests.RequestException:
+            return cur
+        loc, code = r.headers.get("Location"), r.status_code
+        r.close()
+        if code not in (301, 302, 303, 307, 308) or not loc:
+            return cur
+        nxt = urljoin(cur, loc)
+        q = dict(parse_qsl(urlsplit(nxt).query))
+        if urlsplit(nxt).path.startswith("/login") and q.get("next"):   # فيسبوك: تحويل لصفحة الدخول
+            nxt = q["next"]
+        if _host_blocked(urlsplit(nxt).hostname):
+            raise ApiError("blocked_site", "تنزيل يوتيوب غير مدعوم")
+        if not is_public(nxt):
+            raise ApiError("forbidden_url", "الرابط غير مسموح", 403)
+        cur = nxt
+    return cur
+
+
 def _extract(url):
     try:
+        url = expand_url(url)
         with yt_dlp.YoutubeDL(_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.YoutubeDLError as e:
