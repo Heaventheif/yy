@@ -18,9 +18,14 @@
     button,.download{display:inline-flex;align-items:center;justify-content:center;min-width:112px;padding:0 18px;border:0;border-radius:6px;background:#000;color:#fff;font:14px system-ui;cursor:pointer;text-decoration:none}
     button:disabled{opacity:.55;cursor:wait}
     .download{width:100%;font-size:15px}
+    .progress{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#e7e7e7}
+    .progress-fill{height:100%;width:0;background:#000;transition:width .12s ease}
+    .progress-text{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:13px system-ui;mix-blend-mode:difference}
+    .progress[data-indeterminate="true"] .progress-fill{width:38%;animation:progress 1.1s ease-in-out infinite}
     .bar[data-state="error"]{outline:2px solid #d33}
     .bar[data-state="loading"] button{cursor:wait}
     @media(max-width:560px){body{padding:12px}.bar{height:54px}.bar button,.bar .download{min-width:70px;padding:0 8px;font-size:13px}input{padding:0 8px;font-size:13px}select{max-width:76px;padding:0 4px;font-size:11px}}
+    @keyframes progress{0%{transform:translateX(-150%)}100%{transform:translateX(300%)}}
   </style>
 </head>
 <body>
@@ -49,7 +54,36 @@
       return value;
     };
     const setState=(state,text)=>{bar.dataset.state=state;submit.textContent=text;submit.disabled=state==='loading'};
-    const showLink=(href)=>{bar.replaceChildren();const link=document.createElement('a');link.className='download';link.href=href;link.textContent='تنزيل';link.setAttribute('download','');bar.append(link)};
+    const showLink=(href)=>{
+      bar.replaceChildren();
+      const button=document.createElement('button');button.className='download';button.type='button';button.textContent='تنزيل';
+      button.addEventListener('click',()=>streamDownload(href));
+      bar.append(button);
+    };
+    const streamDownload=async href=>{
+      bar.replaceChildren();
+      const progress=document.createElement('div');progress.className='progress';progress.dataset.indeterminate='true';
+      const fill=document.createElement('div');fill.className='progress-fill';
+      const text=document.createElement('div');text.className='progress-text';text.textContent='…';
+      progress.append(fill,text);bar.append(progress);
+      try{
+        const response=await fetch(href,{mode:'cors'});
+        if(!response.ok||!response.body)throw new Error('download');
+        const total=Number(response.headers.get('content-length'))||0;
+        const reader=response.body.getReader();const chunks=[];let received=0;
+        if(total)progress.dataset.indeterminate='false';
+        for(;;){
+          const part=await reader.read();if(part.done)break;
+          chunks.push(part.value);received+=part.value.length;
+          if(total){const percent=Math.min(100,Math.round(received*100/total));fill.style.width=percent+'%';text.textContent=percent+'%'}
+        }
+        fill.style.width='100%';text.textContent='100%';
+        const blob=new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'});
+        const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='download';link.click();
+        setTimeout(()=>URL.revokeObjectURL(link.href),10000);
+        text.textContent='تم';
+      }catch{bar.dataset.state='error';const retry=document.createElement('button');retry.className='download';retry.type='button';retry.textContent='إعادة';retry.onclick=()=>streamDownload(href);bar.replaceChildren(retry)}
+    };
     const resetFormats=()=>{
       parsedYoutube={url:'',formats:[]};
       format.replaceChildren(new Option('فيديو','video'),new Option('صوت MP3','audio'));
