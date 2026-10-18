@@ -11,34 +11,70 @@
     *{box-sizing:border-box}
     html,body{width:100%;min-width:320px;min-height:100%;margin:0;background:#000}
     body{display:grid;place-items:center;min-height:100vh;padding:20px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-    .bar{display:flex;width:min(820px,100%);height:58px;padding:5px;background:#fff;border-radius:9px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
+    .bar{display:flex;width:min(820px,100%);height:58px;padding:5px;background:#fff;border-radius:12px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
     input{min-width:0;flex:1;padding:0 15px;border:0;outline:0;background:#fff;color:#000;font:15px system-ui;text-align:left;direction:ltr}
     input::placeholder{color:#777}
-    select{height:100%;padding:0 9px;border:0;border-right:1px solid #ddd;outline:0;background:#fff;color:#000;font:13px system-ui;cursor:pointer}
-    button,.download{display:inline-flex;align-items:center;justify-content:center;min-width:112px;padding:0 18px;border:0;border-radius:6px;background:#000;color:#fff;font:14px system-ui;cursor:pointer;text-decoration:none}
+    button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:#000;color:#fff;font:14px system-ui;cursor:pointer}
     button:disabled{opacity:.55;cursor:wait}
-    .download{width:100%;font-size:15px}
-    .progress{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#e7e7e7}
+    .submit{min-width:112px;padding:0 18px}
+    .download{width:100%;height:100%;font-size:15px}
+    .bar[data-state="error"]{outline:2px solid #d33}
+    .bar[data-state="loading"] .submit{cursor:wait}
+    .progress{position:relative;width:100%;height:100%;overflow:hidden;border-radius:8px;background:#e7e7e7}
     .progress-fill{height:100%;width:0;background:#000;transition:width .12s ease}
     .progress-text{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:13px system-ui;mix-blend-mode:difference}
     .progress[data-indeterminate="true"] .progress-fill{width:38%;animation:progress 1.1s ease-in-out infinite}
-    .bar[data-state="error"]{outline:2px solid #d33}
-    .bar[data-state="loading"] button{cursor:wait}
-    @media(max-width:560px){body{padding:12px}.bar{height:54px}.bar button,.bar .download{min-width:70px;padding:0 8px;font-size:13px}input{padding:0 8px;font-size:13px}select{max-width:76px;padding:0 4px;font-size:11px}}
+
+    .backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.76);backdrop-filter:blur(8px);z-index:5}
+    .backdrop[hidden]{display:none}
+    .modal{width:min(560px,100%);max-height:min(680px,calc(100vh - 36px));overflow:auto;background:#101010;color:#fff;border:1px solid #292929;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.7);animation:pop .18s ease-out}
+    .modal-head{display:flex;align-items:center;gap:12px;padding:20px 20px 14px;border-bottom:1px solid #262626}
+    .modal-title{flex:1;font-size:18px;font-weight:700}
+    .modal-subtitle{margin-top:4px;color:#8d8d8d;font-size:12px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .close{width:34px;height:34px;border:1px solid #333;border-radius:50%;background:#181818;color:#aaa;font-size:20px;line-height:1}
+    .close:hover{background:#252525;color:#fff}
+    .modal-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#fff;color:#000}
+    .formats{display:grid;gap:10px;padding:18px}
+    .format-card{display:flex;align-items:center;gap:13px;width:100%;padding:13px 14px;border:1px solid #2e2e2e;border-radius:14px;background:#171717;color:#fff;text-align:right;transition:transform .15s,border-color .15s,background .15s}
+    .format-card:hover{transform:translateY(-2px);border-color:#fff;background:#222}
+    .format-icon{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:12px;background:#fff;color:#000}
+    .format-info{min-width:0;flex:1}
+    .format-name{display:block;font-size:15px;font-weight:700}
+    .format-meta{display:block;margin-top:4px;color:#999;font-size:12px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .format-arrow{color:#777;font-size:20px}
+    .empty{padding:30px;text-align:center;color:#aaa}
+    .modal-foot{padding:0 18px 18px;color:#777;font-size:11px;text-align:center}
     @keyframes progress{0%{transform:translateX(-150%)}100%{transform:translateX(300%)}}
+    @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+    @media(max-width:560px){body{padding:12px}.bar{height:54px}.submit{min-width:76px;padding:0 10px;font-size:13px}input{padding:0 8px;font-size:13px}.modal-head{padding:16px}.formats{padding:14px}.format-card{padding:11px}}
   </style>
 </head>
 <body>
   <form class="bar" id="bar" autocomplete="off" novalidate>
     <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="ألصق الرابط" aria-label="الرابط" required>
-    <select id="format" aria-label="الصيغة"><option value="video">فيديو</option><option value="audio">صوت MP3</option></select>
-    <button id="submit" type="submit">تنزيل</button>
+    <button id="submit" class="submit" type="submit">تنزيل</button>
   </form>
+
+  <div class="backdrop" id="backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal-head">
+        <span class="modal-icon" aria-hidden="true" id="modal-icon"></span>
+        <div class="modal-title"><div id="modal-title">اختر الصيغة والجودة</div><div class="modal-subtitle" id="modal-subtitle"></div></div>
+        <button class="close" id="close-modal" type="button" aria-label="إغلاق">×</button>
+      </header>
+      <div class="formats" id="formats"></div>
+      <div class="modal-foot">اختر بطاقة للبدء بالتنزيل</div>
+    </section>
+  </div>
+
   <script>
     const bar=document.querySelector('#bar');
     const input=document.querySelector('#url');
-    const format=document.querySelector('#format');
     const submit=document.querySelector('#submit');
+    const backdrop=document.querySelector('#backdrop');
+    const formatsBox=document.querySelector('#formats');
+    const modalSubtitle=document.querySelector('#modal-subtitle');
+    const closeModal=document.querySelector('#close-modal');
     let parsedYoutube={url:'',formats:[]};
     const youtube=/^(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
     const isYoutube=value=>{try{return youtube.test(new URL(value).hostname)}catch{return false}};
@@ -54,85 +90,71 @@
       return value;
     };
     const setState=(state,text)=>{bar.dataset.state=state;submit.textContent=text;submit.disabled=state==='loading'};
-    const showLink=(href)=>{
-      bar.replaceChildren();
-      const button=document.createElement('button');button.className='download';button.type='button';button.textContent='تنزيل';
-      button.addEventListener('click',()=>streamDownload(href));
-      bar.append(button);
+    const resetFormats=()=>{parsedYoutube={url:'',formats:[]}};
+    const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const iconFor=f=>{
+      const audio=f.kind==='audio'||String(f.mimeType||'').startsWith('audio');
+      return audio?'♫':'▶';
     };
-    const streamDownload=async href=>{
-      bar.replaceChildren();
-      const progress=document.createElement('div');progress.className='progress';progress.dataset.indeterminate='true';
-      const fill=document.createElement('div');fill.className='progress-fill';
-      const text=document.createElement('div');text.className='progress-text';text.textContent='…';
-      progress.append(fill,text);bar.append(progress);
-      try{
-        const response=await fetch(href,{mode:'cors'});
-        if(!response.ok||!response.body)throw new Error('download');
-        const total=Number(response.headers.get('content-length'))||0;
-        const reader=response.body.getReader();const chunks=[];let received=0;
-        if(total)progress.dataset.indeterminate='false';
-        for(;;){
-          const part=await reader.read();if(part.done)break;
-          chunks.push(part.value);received+=part.value.length;
-          if(total){const percent=Math.min(100,Math.round(received*100/total));fill.style.width=percent+'%';text.textContent=percent+'%'}
-        }
-        fill.style.width='100%';text.textContent='100%';
-        const blob=new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'});
-        const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='download';link.click();
-        setTimeout(()=>URL.revokeObjectURL(link.href),10000);
-        text.textContent='تم';
-      }catch{bar.dataset.state='error';const retry=document.createElement('button');retry.className='download';retry.type='button';retry.textContent='إعادة';retry.onclick=()=>streamDownload(href);bar.replaceChildren(retry)}
-    };
-    const resetFormats=()=>{
-      parsedYoutube={url:'',formats:[]};
-      format.replaceChildren(new Option('فيديو','video'),new Option('صوت MP3','audio'));
-    };
-    input.addEventListener('input',()=>{if(parsedYoutube.url&&input.value.trim()!==parsedYoutube.url)resetFormats()});
     const formatLabel=f=>{
-      const kind=f.kind==='audio'?'صوت':(f.kind==='progressive'?'فيديو+صوت':'فيديو');
+      const kind=f.kind==='audio'?'صوت':(f.kind==='progressive'?'فيديو مع صوت':'فيديو');
       const quality=f.qualityLabel||f.quality||'';
       const mime=(f.mimeType||'').split(';')[0].split('/')[1]||'';
       const bitrate=f.bitrate?Math.round(Number(f.bitrate)/1000)+'k':'';
       return [kind,quality,mime,bitrate].filter(Boolean).join(' · ');
     };
-    const loadYoutubeFormats=async normalized=>{
-      const id=normalized.match(/[?&]v=([^&]+)/)?.[1];
-      if(!id)throw new Error('رابط YouTube غير صالح');
-      const response=await fetch('/api/v1/youtube/formats?url='+encodeURIComponent(normalized),{headers:{Accept:'application/json'}});
-      const data=await response.json().catch(()=>({}));
-      const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
-      if(!response.ok||!data.ok||!formats.length)throw new Error(data.error?.message||'تعذر جلب صيغ YouTube');
-      format.replaceChildren(...formats.map((f,i)=>new Option(formatLabel(f),String(i))));
-      parsedYoutube={url:normalized,formats};
+    const openFormats=({normalized,formats,provider})=>{
+      modalSubtitle.textContent=normalized;
+      formatsBox.innerHTML='';
+      formats.forEach((f,index)=>{
+        const card=document.createElement('button');card.type='button';card.className='format-card';
+        const title=f.qualityLabel||f.quality||((f.kind==='audio')?'صوت':'فيديو');
+        card.innerHTML='<span class="format-icon" aria-hidden="true">'+iconFor(f)+'</span><span class="format-info"><span class="format-name">'+escapeHtml(title)+'</span><span class="format-meta">'+escapeHtml(formatLabel(f))+' · '+escapeHtml(provider||'yy')+'</span></span><span class="format-arrow" aria-hidden="true">←</span>';
+        card.addEventListener('click',()=>{closeFormats();streamDownload(f.download_url||('https://api.vidsnap.app/proxy?u='+encodeURIComponent(f.url)))});
+        formatsBox.append(card);
+      });
+      backdrop.hidden=false;closeModal.focus();
     };
-    bar.addEventListener('submit',async event=>{
-      event.preventDefault();
-      const value=input.value.trim();
-      if(!value){input.focus();return}
-      if(isYoutube(value)){
-        setState('loading','…');
-        try{
-          const normalized=normalizeYoutube(value);
-          input.value=normalized;
-          if(parsedYoutube.url!==normalized||!parsedYoutube.formats.length){
-            await loadYoutubeFormats(normalized);
-            setState('idle','تنزيل');
-            return;
-          }
-          const selected=parsedYoutube.formats[Number(format.value)];
-          if(!selected?.url)throw new Error('اختر صيغة صحيحة');
-          showLink(selected.download_url||('https://api.vidsnap.app/proxy?u='+encodeURIComponent(selected.url)));
-        }catch{setState('error','إعادة');setTimeout(()=>setState('idle','تنزيل'),1800)}
-        return;
-      }
-      setState('loading','…');
+    const closeFormats=()=>{backdrop.hidden=true};
+    closeModal.addEventListener('click',closeFormats);
+    backdrop.addEventListener('click',event=>{if(event.target===backdrop)closeFormats()});
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeFormats()});
+    const showLink=href=>{
+      bar.replaceChildren();
+      const button=document.createElement('button');button.className='download';button.type='button';button.textContent='تنزيل';
+      button.addEventListener('click',()=>streamDownload(href));bar.append(button);
+    };
+    const streamDownload=async href=>{
+      bar.replaceChildren();
+      const progress=document.createElement('div');progress.className='progress';progress.dataset.indeterminate='true';
+      const fill=document.createElement('div');fill.className='progress-fill';
+      const text=document.createElement('div');text.className='progress-text';text.textContent='بدء…';
+      progress.append(fill,text);bar.append(progress);
       try{
-        const response=await fetch('/api/v1/resolve?url='+encodeURIComponent(value),{headers:{Accept:'application/json'}});
-        const data=await response.json().catch(()=>({}));
-        if(!response.ok||!data.ok)throw new Error(data.error?.message||'error');
-        showLink(data.download);
-      }catch{setState('error','إعادة');setTimeout(()=>setState('idle','تنزيل'),1800)}
+        const response=await fetch(href,{mode:'cors'});
+        if(!response.ok||!response.body)throw new Error('download');
+        const total=Number(response.headers.get('content-length'))||0;const reader=response.body.getReader();const chunks=[];let received=0;
+        if(total)progress.dataset.indeterminate='false';
+        for(;;){const part=await reader.read();if(part.done)break;chunks.push(part.value);received+=part.value.length;if(total){const percent=Math.min(100,Math.round(received*100/total));fill.style.width=percent+'%';text.textContent=percent+'%'}}
+        fill.style.width='100%';text.textContent='100%';
+        const blob=new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='download';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),10000);text.textContent='تم التنزيل';
+      }catch{bar.dataset.state='error';const retry=document.createElement('button');retry.className='download';retry.type='button';retry.textContent='إعادة المحاولة';retry.onclick=()=>streamDownload(href);bar.replaceChildren(retry)}
+    };
+    const fetchWithTimeout=async(url,options={},ms=25000)=>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),ms);try{return await fetch(url,{...options,signal:controller.signal})}finally{clearTimeout(timer)}};
+    const loadYoutubeFormats=async normalized=>{
+      const response=await fetchWithTimeout('/api/v1/youtube/formats?url='+encodeURIComponent(normalized),{headers:{Accept:'application/json'}},25000);
+      const data=await response.json().catch(()=>({}));const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
+      if(!response.ok||!data.ok||!formats.length)throw new Error(data.error?.message||'تعذر جلب الصيغ');
+      parsedYoutube={url:normalized,formats};openFormats({normalized,formats,provider:data.provider});
+    };
+    input.addEventListener('input',()=>{if(parsedYoutube.url&&input.value.trim()!==parsedYoutube.url)resetFormats()});
+    bar.addEventListener('submit',async event=>{
+      event.preventDefault();const value=input.value.trim();if(!value){input.focus();return}
+      setState('loading','جلب…');
+      try{
+        if(isYoutube(value)){const normalized=normalizeYoutube(value);input.value=normalized;if(parsedYoutube.url!==normalized||!parsedYoutube.formats.length)await loadYoutubeFormats(normalized);else openFormats({normalized,formats:parsedYoutube.formats,provider:'yy'});setState('idle','تنزيل');return}
+        const response=await fetchWithTimeout('/api/v1/resolve?url='+encodeURIComponent(value),{headers:{Accept:'application/json'}},25000);const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error?.message||'تعذر جلب الملف');showLink(data.download);
+      }catch(error){bar.dataset.state='error';submit.disabled=false;submit.textContent=error.name==='AbortError'?'انتهت المهلة':'إعادة';setTimeout(()=>{if(!backdrop.hidden)return;setState('idle','تنزيل')},2400)}
     });
   </script>
 </body>
