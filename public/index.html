@@ -3,146 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f7f1">
-  <meta name="description" content="نزّل الوسائط العامة من منصات التواصل عندما تسمح المنصة بذلك. لا يتطلب حسابًا، ويوتيوب غير مدعوم.">
-  <title>نزّل — روابط الوسائط العامة</title>
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="تنزيل الوسائط من رابط عام">
+  <title>تنزيل</title>
   <style>
-    :root{color-scheme:light;--paper:#f6f7f1;--ink:#17221d;--muted:#657069;--line:#d7ded6;--green:#c7f36b;--green-ink:#203511;--card:#fff;--red:#a8332c;--amber:#80530b;--shadow:0 18px 54px rgba(23,34,29,.08)}
+    :root{color-scheme:dark;background:#000}
     *{box-sizing:border-box}
-    html{min-width:320px;background:var(--paper)}
-    body{margin:0;min-height:100vh;background:var(--paper);color:var(--ink);font:16px/1.65 Tahoma,"Noto Sans Arabic",system-ui,sans-serif}
-    a{color:inherit}
-    .shell{width:min(100% - 36px,1000px);margin:auto;padding:28px 0 34px}
-    .top{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid var(--line);padding-bottom:18px}
-    .brand{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:800;letter-spacing:-.04em}
-    .mark{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:var(--green);color:var(--green-ink);font-size:21px;font-weight:900;transform:rotate(-4deg)}
-    .top-note{color:var(--muted);font-size:13px}
-    main{padding:clamp(50px,10vw,112px) 0 42px}
-    .eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.04em}
-    .dot{width:8px;height:8px;border-radius:50%;background:#78a828;box-shadow:0 0 0 4px rgba(120,168,40,.12)}
-    h1{max-width:760px;margin:16px 0 12px;font-size:clamp(36px,7vw,66px);line-height:1.12;letter-spacing:-.055em}
-    .intro{max-width:610px;margin:0 0 32px;color:var(--muted);font-size:clamp(16px,2.4vw,19px)}
-    .panel{max-width:790px;padding:18px;background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}
-    .form-row{display:flex;gap:10px;align-items:stretch}
-    .field-wrap{position:relative;flex:1;min-width:0}
-    label{display:block;margin:0 0 7px;font-size:13px;font-weight:700}
-    input{width:100%;min-height:58px;padding:0 16px;border:1px solid var(--line);border-radius:12px;background:#fbfcf9;color:var(--ink);font:inherit;direction:ltr;text-align:left;outline:none;transition:border-color .16s,box-shadow .16s}
-    input::placeholder{color:#8a948c}
-    input:focus{border-color:#738d58;box-shadow:0 0 0 3px rgba(115,141,88,.16)}
-    button,.download{min-height:58px;padding:0 23px;border:0;border-radius:12px;background:var(--green);color:var(--green-ink);font:inherit;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:9px;transition:transform .16s,filter .16s}
-    button:hover,.download:hover{filter:brightness(.97);transform:translateY(-1px)}
-    button:focus-visible,.download:focus-visible{outline:3px solid #667b50;outline-offset:3px}
-    button:disabled{opacity:.56;cursor:wait;transform:none}
-    .mini{position:absolute;left:9px;top:34px;min-height:38px;padding:0 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--muted);font-size:12px;font-weight:600}
-    .help{margin:10px 1px 0;color:var(--muted);font-size:12px}
-    .result{display:none;max-width:790px;margin-top:14px;padding:17px 18px;border:1px solid var(--line);border-radius:14px;background:#fff;animation:rise .2s ease-out}
-    .result[data-state="success"]{border-color:#b5d38e;background:#fbfff3}
-    .result[data-state="error"]{border-color:#e8c4bd;background:#fff9f8}
-    .result[data-state="loading"]{display:block}
-    .result[data-state="success"],.result[data-state="error"]{display:block}
-    .result-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-    .result-title{margin:0;font-size:16px;font-weight:800;overflow-wrap:anywhere}
-    .badge{flex:none;padding:3px 9px;border-radius:999px;background:#eef2e9;color:#586653;font-size:11px;font-weight:700}
-    .message{margin:5px 0 0;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
-    [data-state="error"] .message{color:var(--red)}
-    .download{min-height:46px;margin-top:14px;padding:0 17px;border-radius:10px;font-size:14px}
-    .wait{display:inline-block;width:14px;height:14px;border:2px solid #cad3ca;border-top-color:#293b2d;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
-    .support{max-width:790px;margin-top:34px}
-    .support-title{margin:0 0 12px;font-size:13px;font-weight:800}
-    .chips{display:flex;flex-wrap:wrap;gap:8px}
-    .chip{padding:5px 11px;border:1px solid var(--line);border-radius:999px;color:#46534b;background:rgba(255,255,255,.55);font-size:12px}
-    .notice{max-width:790px;margin-top:18px;padding:13px 15px;border-right:3px solid #d7aa4a;color:#626053;background:#f0eee2;font-size:12px}
-    footer{display:flex;justify-content:space-between;gap:16px;max-width:790px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted);font-size:11px}
-    footer a{text-decoration-color:#a8b2a8;text-underline-offset:3px}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
-    @media(max-width:620px){.shell{width:min(100% - 24px,1000px);padding-top:17px}.top-note{max-width:150px;text-align:left;font-size:11px}main{padding-top:62px}.panel{padding:12px}.form-row{flex-direction:column}.mini{top:36px}button{width:100%}.result-head{flex-direction:column;gap:6px}footer{flex-direction:column}}
-    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+    html,body{width:100%;min-width:320px;min-height:100%;margin:0;background:#000}
+    body{display:grid;place-items:center;min-height:100vh;padding:20px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+    .bar{display:flex;width:min(720px,100%);height:58px;padding:5px;background:#fff;border-radius:9px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
+    input{min-width:0;flex:1;padding:0 15px;border:0;outline:0;background:#fff;color:#000;font:15px system-ui;text-align:left;direction:ltr}
+    input::placeholder{color:#777}
+    button,.download{display:inline-flex;align-items:center;justify-content:center;min-width:112px;padding:0 18px;border:0;border-radius:6px;background:#000;color:#fff;font:14px system-ui;cursor:pointer;text-decoration:none}
+    button:disabled{opacity:.55;cursor:wait}
+    .download{width:100%;font-size:15px}
+    .bar[data-state="error"]{outline:2px solid #d33}
+    .bar[data-state="loading"] button{cursor:wait}
+    @media(max-width:560px){body{padding:12px}.bar{height:54px}.bar button,.bar .download{min-width:82px;padding:0 10px;font-size:13px}input{padding:0 10px;font-size:13px}}
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header class="top">
-      <div class="brand"><span class="mark" aria-hidden="true">↓</span><span>نزّل</span></div>
-      <div class="top-note">روابط مباشرة للوسائط العامة، عندما تسمح المنصة</div>
-    </header>
-    <main>
-      <div class="eyebrow"><span class="dot" aria-hidden="true"></span> أداة تنزيل بسيطة وواضحة</div>
-      <h1>الرابط هنا.<br>والباقي علينا.</h1>
-      <p class="intro">ألصق رابط المنشور العام. نتحقق من توفر ملف تنزيل، ثم نمرّره لك مع اسم الملف ودعم الاستئناف.</p>
-      <section class="panel" aria-label="نموذج التنزيل">
-        <form id="form" autocomplete="off" novalidate>
-          <label for="url">رابط المنشور أو الفيديو</label>
-          <div class="form-row">
-            <div class="field-wrap">
-              <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="https://www.facebook.com/..." aria-describedby="help" required>
-              <button class="mini" id="paste" type="button" aria-label="لصق من الحافظة">لصق</button>
-            </div>
-            <button id="submit" type="submit">تحقّق من الرابط <span aria-hidden="true">←</span></button>
-          </div>
-          <p class="help" id="help">استخدم رابطًا عامًا. لن نطلب كلمة مرورك أو ملفات cookies.</p>
-        </form>
-      </section>
-      <section id="result" class="result" role="status" aria-live="polite" aria-atomic="true"></section>
-      <section class="support" aria-labelledby="supported-heading">
-        <h2 class="support-title" id="supported-heading">منصات قد تعمل</h2>
-        <div class="chips" aria-label="منصات مدعومة حسب نوع الرابط وتوفره">
-          <span class="chip">Facebook</span><span class="chip">Instagram</span><span class="chip">TikTok</span>
-          <span class="chip">Reddit</span><span class="chip">Dailymotion</span><span class="chip">SoundCloud</span>
-          <span class="chip">Flickr</span><span class="chip">Streamable</span>
-        </div>
-      </section>
-      <aside class="notice">المنصات قد تمنع الوصول إلى بعض الروابط العامة، خصوصًا من الخوادم السحابية. لا ندعم YouTube ولا نتجاوز تسجيل الدخول أو إعدادات التنزيل أو حماية الحقوق.</aside>
-    </main>
-    <footer><span>لا ترفع محتوى لا تملكه أو لا تملك إذنًا بتنزيله.</span><a href="https://github.com/Heaventheif/yy/blob/main/API.md" rel="noopener noreferrer">توثيق API</a></footer>
-  </div>
+  <form class="bar" id="bar" autocomplete="off" novalidate>
+    <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="ألصق الرابط" aria-label="الرابط" required>
+    <button id="submit" type="submit">تنزيل</button>
+  </form>
   <script>
-    const form=document.querySelector('#form');
+    const bar=document.querySelector('#bar');
     const input=document.querySelector('#url');
     const submit=document.querySelector('#submit');
-    const paste=document.querySelector('#paste');
-    const result=document.querySelector('#result');
-    const setResult=(state,title,message,extra='')=>{
-      result.dataset.state=state;
-      result.replaceChildren();
-      const head=document.createElement('div');head.className='result-head';
-      const heading=document.createElement('h2');heading.className='result-title';heading.textContent=title;
-      head.append(heading);
-      if(extra){const badge=document.createElement('span');badge.className='badge';badge.textContent=extra;head.append(badge)}
-      const description=document.createElement('p');description.className='message';description.textContent=message;
-      result.append(head,description);
-    };
-    paste.addEventListener('click',async()=>{
-      try{input.value=await navigator.clipboard.readText();input.focus()}
-      catch{setResult('error','تعذر اللصق','اسمح للمتصفح بالوصول إلى الحافظة أو الصق الرابط يدويًا.')}
-    });
-    form.addEventListener('submit',async event=>{
+    const youtube=/^(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
+    const isYoutube=value=>{try{return youtube.test(new URL(value).hostname)}catch{return false}};
+    const setState=(state,text)=>{bar.dataset.state=state;submit.textContent=text;submit.disabled=state==='loading'};
+    const showLink=(href)=>{bar.replaceChildren();const link=document.createElement('a');link.className='download';link.href=href;link.textContent='تنزيل';link.setAttribute('download','');bar.append(link)};
+    bar.addEventListener('submit',async event=>{
       event.preventDefault();
       const value=input.value.trim();
       if(!value){input.focus();return}
-      submit.disabled=true;
-      setResult('loading','نراجع الرابط','جارٍ فحص المنصة والبحث عن ملف عام…');
-      const loading=document.createElement('span');loading.className='wait';loading.setAttribute('aria-hidden','true');
-      result.querySelector('.result-head').append(loading);
+      if(isYoutube(value)){
+        showLink('https://yozora.vercel.app/api/download?url='+encodeURIComponent(value)+'&format='+encodeURIComponent('bestvideo+bestaudio/best'));
+        return;
+      }
+      setState('loading','…');
       try{
-        const response=await fetch('/api/v1/resolve?url='+encodeURIComponent(value),{headers:{'Accept':'application/json'}});
+        const response=await fetch('/api/v1/resolve?url='+encodeURIComponent(value),{headers:{Accept:'application/json'}});
         const data=await response.json().catch(()=>({}));
-        if(!response.ok||!data.ok){
-          const error=data.error||{};
-          const status=error.upstream_status;
-          let message=error.message||'لم نتمكن من استخراج رابط التنزيل.';
-          if(status===402)message='المصدر أعاد HTTP 402. الخدمة لا تستخدم API مدفوعًا، ولا تحاول تجاوز قرار المنصة.';
-          else if(status===403||status===401)message='المنصة رفضت الوصول. قد يكون المحتوى مقيدًا أو أن خادم Vercel محجوب من المصدر.';
-          setResult('error','تعذّر تجهيز التنزيل',message,error.code||'تحقق من الرابط');
-          if(data.request_id){const id=document.createElement('p');id.className='message';id.textContent='رقم الطلب: '+data.request_id;result.append(id)}
-          return;
-        }
-        setResult('success',data.title||'الملف جاهز',`الموقع: ${data.site||'وسائط'} · ${data.ext||'ملف'}${data.size?` · ${Math.max(1,Math.round(data.size/1024/1024))} MB`:''}`, 'جاهز');
-        const link=document.createElement('a');link.className='download';link.href=data.download;link.textContent='تنزيل الملف';link.setAttribute('aria-label','تنزيل '+(data.title||'الملف'));
-        result.append(link);
-      }catch{
-        setResult('error','تعذّر الاتصال بالخدمة','لم يصل الرد. تحقق من اتصالك ثم أعد المحاولة. إذا ظهرت 443 في السجل فهذا منفذ HTTPS، وليس رمز HTTP مستقلًا.');
-      }finally{submit.disabled=false}
+        if(!response.ok||!data.ok)throw new Error(data.error?.message||'error');
+        showLink(data.download);
+      }catch{setState('error','إعادة');setTimeout(()=>setState('idle','تنزيل'),1800)}
     });
   </script>
 </body>
