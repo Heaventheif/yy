@@ -280,6 +280,44 @@ def api_youtube_formats():
     session = requests.Session()
     session.trust_env = False
     try:
+        try:
+            toshiro = session.get(
+                "https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl",
+                params={"url": normalized},
+                headers={"Accept": "application/json", "User-Agent": "yy/2"},
+                timeout=(5, 35),
+            )
+            toshiro_data = toshiro.json()
+            result = toshiro_data.get("result") if isinstance(toshiro_data, dict) else None
+            if toshiro.ok and toshiro_data.get("success") and isinstance(result, dict) and result.get("status"):
+                seen = set()
+                formats = []
+                for label, key in (("فيديو", "video"), ("جودة عالية", "high_quality"), ("جودة منخفضة", "low_quality"), ("فيديو", "url")):
+                    media_url = result.get(key)
+                    if isinstance(media_url, str) and media_url.startswith(("http://", "https://")) and media_url not in seen:
+                        seen.add(media_url)
+                        formats.append({
+                            "kind": "progressive",
+                            "qualityLabel": label,
+                            "mimeType": "video/mp4",
+                            "url": media_url,
+                            "download_url": media_url,
+                        })
+                if formats:
+                    toshiro.close()
+                    return _json({
+                        "ok": True,
+                        "provider": "toshiro",
+                        "normalized": normalized,
+                        "platform": "youtube",
+                        "videoId": video_id,
+                        "title": result.get("title") or "YouTube",
+                        "formats": formats,
+                    })
+            toshiro.close()
+        except (requests.RequestException, ValueError, AttributeError):
+            pass
+
         attempts = (
             {"id": video_id},
             {"url": normalized},

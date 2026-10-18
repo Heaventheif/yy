@@ -2,9 +2,9 @@
 
 الخدمة عامة بلا مفاتيح. عوّض `https://YOUR-APP.vercel.app` بعنوان مشروعك. واجهة API الحالية `v1`. جميع الردود JSON بترميز UTF-8 عدا مسار التنزيل. **لا يعيد `resolve` الرابط الأصلي الموقّع أو ترويسات CDN**؛ استخدم `download` ليبقى تمرير الملف وترويساته داخل الخدمة.
 
-تقبل واجهة API رابطًا عامًا واحدًا من النطاقات المسجلة فقط. YouTube غير مدعوم داخل API الخاصة بـ`yy`؛ الواجهة تطبع رابط YouTube إلى صيغة `www.youtube.com/watch?v=...`، ثم تطلب الصيغ من `https://api.vidsnap.app/parse?id=VIDEO_ID` وتستخدم `https://api.vidsnap.app/proxy?u=MEDIA_URL` لتنزيل الصيغة التي يختارها المستخدم. الاستجابة من المصدر قد تظل 402 أو 403 أو فشل TLS؛ لا تتجاوز الخدمة قيود المصدر.
+تقبل واجهة API رابطًا عامًا واحدًا من النطاقات المسجلة فقط. YouTube غير مدعوم داخل API الخاصة بـ`yy`؛ الواجهة تطبع رابط YouTube إلى صيغة `www.youtube.com/watch?v=...`، ثم تطلب الصيغ أولًا من Toshiro عبر `https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl?url=...`. إذا فشل Toshiro، تستخدم VidSnap كخيار احتياطي عبر `https://api.vidsnap.app/parse?id=VIDEO_ID` أو رابط YouTube القياسي.
 
-روابط CDN التي يعيدها VidSnap لا تُعرض للمستخدم كرابط نهائي؛ تُمرر الصيغة المختارة عبر proxy الخاص بـVidSnap.
+روابط VidSnap الاحتياطية تُمرر عبر `https://api.vidsnap.app/proxy?u=MEDIA_URL`، بينما روابط Toshiro الناتجة تُستخدم كما يعيدها المزود.
 
 ## المسارات
 
