@@ -1,165 +1,112 @@
-# توثيق الـ API (عام، بلا مفاتيح)
+# API الخدمة
 
-أي شخص يملك رابط النشر يستخدمه مباشرة. استبدل `https://YOUR-APP.vercel.app` برابطك.
-الإصدار الحالي: `v1`. عند الفشل يحتوي `error.detail` على السبب التقني للتشخيص (ويُطبع أيضا في سجلات Vercel). كل الردود JSON بترميز UTF-8 عدا التنزيل.
+الخدمة عامة بلا مفاتيح. عوّض `https://YOUR-APP.vercel.app` بعنوان مشروعك. واجهة API الحالية `v1`. جميع الردود JSON بترميز UTF-8 عدا مسار التنزيل. **لا يعيد `resolve` الرابط الأصلي الموقّع أو ترويسات CDN**؛ استخدم `download` ليبقى تمرير الملف وترويساته داخل الخدمة.
 
-> روابط المشاركة والاختصار (facebook.com/share/…، fb.watch، t.co، bit.ly، vm.tiktok.com…) تُفكّ تلقائيا قبل الاستخراج.
->
-> يوتيوب غير مدعوم عمدا. يعمل مع المواقع التي يدعمها yt-dlp ويقدّم ملفا واحدا جاهزا (صوت+فيديو أو صوت فقط) عبر http(s).
+تقبل الخدمة رابطًا عامًا واحدًا من النطاقات المسجلة فقط. YouTube غير مدعوم. الاستجابة من المصدر قد تظل 402 أو 403 أو فشل TLS؛ لا تتجاوز الخدمة قيود المصدر.
 
-## النقاط
+## المسارات
 
-| الطريقة | المسار | الوظيفة |
+| الطريقة | المسار | الوصف |
 |---|---|---|
-| GET | `/api/v1/resolve?url=` | رابط واحد ← بيانات + رابط تنزيل |
-| POST | `/api/v1/batch` | حتى 10 روابط بالتوازي (`?stream=1` لـ NDJSON متدفق) |
-| GET / HEAD | `/api/v1/download?url=` | تمرير الملف (يدعم `Range`، و`redirect=1`) |
-| GET | `/api/v1/health` | الحالة والحدود الحالية |
+| GET | `/api/v1/resolve?url=` | استخراج العنوان والبيانات ورابط خدمة التنزيل |
+| POST | `/api/v1/batch` | استخراج عدة روابط دفعة واحدة؛ `?stream=1` يعيد NDJSON |
+| GET / HEAD | `/api/v1/download?url=` | تمرير الملف مع `Range` واسم مناسب |
+| GET | `/api/v1/health` | حالة الخدمة وقائمة المواقع المعرفة |
 
-### `GET /api/v1/resolve`
+### حل رابط واحد
+
 ```bash
-curl "https://YOUR-APP.vercel.app/api/v1/resolve?url=https://vimeo.com/76979871"
+curl --get 'https://YOUR-APP.vercel.app/api/v1/resolve' \
+  --data-urlencode 'url=https://www.facebook.com/watch/?v=123456789'
 ```
+
+رد مختصر:
+
 ```json
 {
   "ok": true,
-  "input": "https://vimeo.com/76979871",
-  "title": "…", "ext": "mp4", "size": 12345678, "duration": 212,
-  "thumbnail": "https://…", "site": "Vimeo",
-  "download": "https://YOUR-APP.vercel.app/api/v1/download?url=https%3A%2F%2Fvimeo.com%2F76979871",
-  "source": { "url": "https://cdn…/file.mp4", "headers": { "User-Agent": "…" } }
+  "input": "https://www.facebook.com/watch/?v=123456789",
+  "title": "عنوان الملف",
+  "ext": "mp4",
+  "size": 12345678,
+  "duration": 212,
+  "site": "Facebook",
+  "download": "https://YOUR-APP.vercel.app/api/v1/download?url=…",
+  "expires_in": 75
 }
 ```
-- `download`: رابط جاهز للمتصفح أو `<a href>`؛ يرجع الملف باسم العنوان (`Content-Disposition`).
-- `source`: الرابط المباشر عند المصدر مع الهيدرات اللازمة. استخدمه من خادمك إن أردت تجاوز تمرير الملف عبر هذه الخدمة، لكن قد يكون مقيّدا بـ IP/Referer وينتهي بسرعة.
 
-### `POST /api/v1/batch`
+`expires_in` هو الحد الأقصى لعمر نتيجة الكاش بالثواني، وليس وعدًا بعمر رابط CDN؛ استخدم رابط التنزيل فورًا. `fresh=1` يتجاوز نتيجة الكاش لهذا الطلب.
+
+### تنزيل الملف
+
 ```bash
-curl -X POST https://YOUR-APP.vercel.app/api/v1/batch \
-  -H "Content-Type: application/json" \
-  -d '{"urls":["https://vimeo.com/76979871","https://soundcloud.com/a/b"]}'
-```
-```json
-{ "ok": true, "count": 2, "results": [ { "ok": true, "...": "…" }, { "ok": false, "input": "…", "error": { "code": "unsupported", "message": "…" } } ] }
-```
-- فشل عنصر لا يُفشل الدفعة: افحص `ok` لكل عنصر. الترتيب كترتيب الإدخال بعد حذف المكرر.
-- **تدفق:** أضف `?stream=1` (أو `Accept: application/x-ndjson`) فيصلك سطر JSON لكل رابط فور جاهزيته مع `index`، دون انتظار أبطأ رابط:
-```bash
-curl -N -X POST "https://YOUR-APP.vercel.app/api/v1/batch?stream=1" -H "Content-Type: application/json" -d '{"urls":["…","…"]}'
+curl -L -OJ --get 'https://YOUR-APP.vercel.app/api/v1/download' \
+  --data-urlencode 'url=https://www.facebook.com/watch/?v=123456789'
+curl -r 0-1048575 -o part.bin 'https://YOUR-APP.vercel.app/api/v1/download?url=…'
 ```
 
-### `GET /api/v1/download`
+يدعم المسار `GET` و`HEAD` واستئناف `Range`. يعيد استخراج الرابط مرة واحدة إذا رفض المصدر رابط CDN منتهيًا بـ 401/403/404/410. `redirect=1` اختياري ويعيد 302 إلى CDN بدل التمرير؛ قد يفشل إذا كان الرابط مربوطًا بـ IP أو `Referer`. لا تعرض الخدمة raw CDN URL في JSON.
+
+### الدفعات
+
 ```bash
-curl -L -OJ "https://YOUR-APP.vercel.app/api/v1/download?url=https://vimeo.com/76979871"
-curl -r 0-1048575 -o part.bin "…/api/v1/download?url=…"      # جزء من الملف
+curl -X POST 'https://YOUR-APP.vercel.app/api/v1/batch' \
+  -H 'Content-Type: application/json' \
+  -d '{"urls":["https://www.facebook.com/watch/?v=123456789","https://vimeo.com/76979871"]}'
 ```
-- يدعم `Range` (استئناف التنزيل) و`HEAD`.
-- `redirect=1` ← `302` إلى الرابط المباشر بدل التمرير (يوفّر عرض النطاق؛ قد يفشل مع روابط مقيّدة).
-- أقصى مدة للطلب 300 ثانية؛ المتصفحات ومدراء التنزيل يكملون الباقي بـ `Range` تلقائيا.
+
+الحد الافتراضي 8 روابط (أقصاه 10). تُحفظ النتائج بترتيب الإدخال، ويُعزل فشل الرابط عن بقية النتائج. لا تُرسل مدخلات أكبر من 512 KB.
+
+```bash
+curl -N -X POST 'https://YOUR-APP.vercel.app/api/v1/batch?stream=1' \
+  -H 'Content-Type: application/json' \
+  -d '{"urls":["…","…"]}'
+```
+
+عند تفعيل `stream=1` يصل سطر JSON لكل عنصر مع `index`؛ الترتيب هنا هو ترتيب اكتمال التنفيذ، لا ترتيب الإدخال.
 
 ## الأخطاء
-شكل موحّد وكود HTTP مناسب:
+
 ```json
-{ "ok": false, "error": { "code": "rate_limited", "message": "…" } }
-```
-| code | HTTP | المعنى |
-|---|---|---|
-| `invalid_url` / `invalid_request` | 400 | مدخل غير صحيح |
-| `blocked_site` | 400 | موقع محجوب (يوتيوب) |
-| `forbidden_url` | 400/403 | عنوان داخلي أو غير مسموح |
-| `not_found` | 404 | المحتوى محذوف أو المسار خاطئ |
-| `too_many_urls` | 413 | تجاوز حد الدفعة |
-| `unsupported` / `private` / `no_format` | 422 | موقع غير مدعوم / يتطلب دخولا / لا ملف مباشر |
-| `rate_limited` | 429 | تجاوز الحد (انظر `Retry-After`) |
-| `extract_failed` / `upstream_error` | 502 | فشل الاستخراج أو المصدر |
-| `busy` | 503 | ازدحام (انظر `Retry-After`) |
-| `timeout` | 504 | تجاوز مهلة الاستخراج |
-
-## الحدود وتحديد المعدل
-لا مفاتيح؛ الحماية بحد لكل IP (token bucket):
-- `resolve`/`batch`: **60 وحدة/دقيقة** (الدفعة تستهلك بعدد روابطها الفريدة).
-- `download`: **20 بداية تنزيل/دقيقة** (أجزاء الاستئناف `Range` لا تُحسب).
-
-كل رد فيه: `RateLimit-Limit` · `RateLimit-Remaining` · `RateLimit-Reset` (ثوان)، وعند 429/503: `Retry-After`.
-كما يرجع `X-Request-Id` (أرسله أنت لتتبّع طلبك) و`Server-Timing`.
-
-> على Vercel كل نسخة دالة تعدّ بذاكرتها، فالحد تقريبي وليس ضمانا صارما. للحد الصارم فعّل Vercel Firewall (Rate Limiting) أمام `/api/*`.
-
-## تجنّب N+1 والتأخير
-- **كاش 120 ث** لكل رابط، و**كاش سلبي 15 ث** للفشل (لا إعادة استخراج فاشل متكررة).
-- **دمج الطلبات المتزامنة:** عشرة طلبات لنفس الرابط تنتج استخراجا واحدا.
-- **الدفعات** تُنفَّذ بالتوازي وبلا تكرار: استعمل `/batch` بدل حلقة تستدعي `/resolve` لكل رابط.
-- مهلة استخراج 30 ث (`504`) وسقف طوابير (`503` مع `Retry-After`) بدل تعليق الطلبات.
-- التنزيل يبدأ بثا فور أول بايت (أجزاء 256KB بلا تخزين مؤقت).
-- لا تستدعِ `resolve` قبل `download` إن كنت ستنزّل فقط: `download` يستخرج بنفسه ويستفيد من الكاش.
-
-## الربط
-
-### متصفح (بدون أي كود خادم)
-```html
-<a href="https://YOUR-APP.vercel.app/api/v1/download?url=https%3A%2F%2Fvimeo.com%2F76979871">تنزيل</a>
-```
-CORS مفتوح (`*`) فيعمل `fetch` من أي موقع. للتقييد: متغير `CORS_ORIGIN=https://mysite.com`.
-
-### JavaScript (مع التعامل مع 429)
-```js
-const API = "https://YOUR-APP.vercel.app/api/v1";
-async function call(path, init, tries = 3) {
-  for (let i = 0; i < tries; i++) {
-    const r = await fetch(API + path, init);
-    if (r.status !== 429 && r.status !== 503) return r.json();
-    const wait = Number(r.headers.get("Retry-After") || 2);
-    await new Promise(res => setTimeout(res, wait * 1000));
-  }
-  throw new Error("busy");
-}
-const one = await call("/resolve?url=" + encodeURIComponent(url));
-const many = await call("/batch", { method: "POST", headers: {"Content-Type": "application/json"},
-                                    body: JSON.stringify({ urls }) });
-```
-
-### JavaScript: قراءة NDJSON المتدفق
-```js
-const r = await fetch(API + "/batch?stream=1", { method: "POST",
-  headers: {"Content-Type": "application/json"}, body: JSON.stringify({ urls }) });
-const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-let buf = "";
-for (;;) {
-  const { value, done } = await reader.read(); if (done) break;
-  buf += value; let i;
-  while ((i = buf.indexOf("\n")) >= 0) { console.log(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); }
+{
+  "ok": false,
+  "error": {"code":"source_forbidden","message":"…","upstream_status":403},
+  "request_id":"…"
 }
 ```
 
-### Python
-```python
-import requests
-API = "https://YOUR-APP.vercel.app/api/v1"
-r = requests.post(f"{API}/batch", json={"urls": urls}, timeout=60)
-for item in r.json()["results"]:
-    if item["ok"]:
-        with requests.get(item["download"], stream=True, timeout=(10, 60)) as d, open("out.bin", "wb") as f:
-            for chunk in d.iter_content(256 * 1024):
-                f.write(chunk)
-```
+| الرمز | HTTP لدى الخدمة | التفسير |
+|---|---:|---|
+| `invalid_url`, `invalid_request` | 400 | صيغة الرابط/الطلب غير صحيحة |
+| `youtube_unsupported`, `unsupported`, `official_api_required` | 422 | موقع غير مدعوم أو يحتاج تكامل API رسميًا |
+| `forbidden_url` | 403 | نطاق داخلي أو عنوان غير عام أو وجهة تحويل غير آمنة |
+| `source_payment_required` | 502 | أعاد المصدر `upstream_status: 402`؛ ليس دليلًا تلقائيًا على وجود اشتراك في خدمة yy |
+| `source_forbidden` | 502 أو 422 | أعاد المصدر 401/403 أو يتطلب صلاحية دخول |
+| `source_rate_limited` | 502 | المصدر حدّ الطلبات؛ انتظر ثم أعد المحاولة |
+| `upstream_tls_error`, `upstream_unreachable` | 502 | فشل اتصال TLS/HTTPS أو تعذر الوصول للمصدر؛ 443 عادة رقم منفذ HTTPS لا HTTP status |
+| `not_found` | 404 | المحتوى محذوف أو الرابط غير صالح |
+| `rate_limited` | 429 | تجاوز الحد المحلي؛ افحص `Retry-After` |
+| `busy` | 503 | حد استخراج متزامن لكل نسخة؛ أعد المحاولة |
+| `timeout`, `upstream_timeout` | 504 | تجاوز مهلة الاستخراج/الاتصال |
 
-### بوت / سكربت (Node)
-```js
-const res = await fetch(`${API}/resolve?url=${encodeURIComponent(url)}`);
-const { ok, download, title } = await res.json();
-if (ok) sendToUser(download, title);   // أرسل الرابط للمستخدم أو نزّله
-```
+يصدر كل رد من API ترويسة `X-Request-Id`. عند الأخطاء upstream تسجل Vercel رمز الحالة والنطاق (لا تسجل الاستعلام أو رابط CDN) لتسهيل التشخيص.
 
-## المتغيرات (اختيارية، من لوحة Vercel ← Environment Variables)
-| المتغير | الافتراضي | الوصف |
-|---|---|---|
-| `RATE_LIMIT_PER_MIN` | 60 | حد resolve/batch لكل IP (0 = معطّل) |
-| `DL_RATE_LIMIT_PER_MIN` | 20 | حد بدايات التنزيل لكل IP |
-| `BATCH_MAX` | 10 | أقصى روابط في الدفعة |
-| `EXTRACT_TIMEOUT_SEC` | 30 | مهلة الاستخراج |
-| `MAX_PENDING_EXTRACTIONS` | 24 | سقف الاستخراجات المنتظرة قبل 503 |
-| `CACHE_TTL_SEC` | 120 | مدة كاش النجاح |
-| `CORS_ORIGIN` | `*` | الأصل المسموح |
-| `REDIRECT` | 0 | `1` = download يحوّل 302 افتراضيا |
-| `ALLOW_GENERIC` | 0 | `1` = السماح بأي رابط ملف (وسيط عام، غير موصى به) |
-| `PROXY` | — | بروكسي لطلبات الاستخراج والتنزيل |
+## المعدلات والكاش
+
+القيم الافتراضية: 60 طلب resolve/batch و20 بداية تنزيل في الدقيقة لكل IP، وكاش استخراج 75 ثانية، وحد دفعة 8، و8 عمليات استخراج متزامنة لكل نسخة. `Range` غير الصفري لا يُحسب كبداية تنزيل. هذه القيود والكاش في ذاكرة Function محلية، لذا تختلف باختلاف النسخة ولا تمثل حدًا عالميًا؛ استخدم Vercel Firewall للحماية الصارمة.
+
+## متغيرات البيئة
+
+| المتغير | الافتراضي | الغرض |
+|---|---:|---|
+| `RATE_LIMIT_PER_MIN` | 60 | حد resolve/batch لكل IP؛ 0 لتعطيله |
+| `DL_RATE_LIMIT_PER_MIN` | 20 | حد بدايات التنزيل لكل IP؛ 0 لتعطيله |
+| `BATCH_MAX` | 8 | حد الدفعة (10 كحد أقصى) |
+| `EXTRACT_TIMEOUT_SEC` | 28 | مهلة استخراج yt-dlp، أدنى من مهلة Vercel |
+| `MAX_PENDING_EXTRACTIONS` | 8 | سقف الاستخراجات لكل نسخة |
+| `CACHE_TTL_SEC` | 75 | عمر نتيجة الكاش |
+| `CORS_ORIGIN` | `*` | أصل CORS؛ الأفضل ضبط أصل موقعك |
+| `REDIRECT` | `0` | `1` لتفعيل تحويل CDN افتراضيًا |
+
+Vercel يتيح بث Python، لكنه يفرض حدًا للمدة وحجم الحمولة حسب وثائقه وخطتك؛ لا يصلح هذا API كبديل عن مخزن أو خدمة نقل مخصصة للملفات الكبيرة جدًا.
