@@ -55,10 +55,26 @@ def _needs_expand(url: str) -> bool:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower().rstrip(".")
     path = parts.path.lower()
-    return (host_matches(host, SHORTENERS)
-            or (host_matches(host, ("facebook.com", "instagram.com")) and path.startswith("/share"))
-            or (host_matches(host, ("tiktok.com",)) and path.startswith("/t/"))
-            or (host_matches(host, ("reddit.com",)) and "/s/" in path))
+    share_path = (path.startswith(("/share", "/stories/", "/t/")) or "/s/" in path)
+    alias_host = host_matches(host, (
+        "fb.watch", "fb.me", "vm.tiktok.com", "vt.tiktok.com", "redd.it", "dai.ly",
+    ))
+    return host_matches(host, SHORTENERS) or alias_host or (
+        provider_for_host(host) is not None and share_path
+    )
+
+
+def _canonical_share_target(url: str) -> str | None:
+    """Resolve a supported share/short URL to yt-dlp's canonical media URL."""
+    try:
+        with yt_dlp.YoutubeDL(_options()) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        return None
+    target = info.get("webpage_url") if isinstance(info, dict) else None
+    if not isinstance(target, str) or target == url:
+        return None
+    return target
 
 
 def expand_url(url: str, max_hops: int = 6) -> str:
@@ -70,6 +86,17 @@ def expand_url(url: str, max_hops: int = 6) -> str:
         for _ in range(max_hops):
             if not _needs_expand(current):
                 return current
+            if not is_youtube_host((urlsplit(current).hostname or "").lower()):
+                candidate = _canonical_share_target(current)
+                if candidate:
+                    parts = urlsplit(candidate)
+                    host = (parts.hostname or "").lower().rstrip(".")
+                    if is_youtube_host(host):
+                        raise ApiError("youtube_unsupported", "تنزيل YouTube غير مدعوم.", 422)
+                    if provider_for_host(host) is None or not is_public_url(candidate):
+                        raise ApiError("unsupported_redirect", "قاد رابط المشاركة إلى موقع غير مدعوم.", 422)
+                    current = candidate
+                    continue
             try:
                 response = session.get(
                     current,
@@ -121,7 +148,6 @@ def _options() -> dict:
         "retries": 1,
         "extractor_retries": 1,
         "color": "never",
-        "allowed_extractors": ["default", "-.*youtube.*", "-generic"],
     }
 
 
