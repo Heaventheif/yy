@@ -99,12 +99,25 @@
     const loadYoutubeFormats=async normalized=>{
       const id=normalized.match(/[?&]v=([^&]+)/)?.[1];
       if(!id)throw new Error('رابط YouTube غير صالح');
-      const response=await fetch('https://api.vidsnap.app/parse?id='+encodeURIComponent(id),{headers:{Accept:'application/json'}});
-      const data=await response.json().catch(()=>({}));
-      const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
-      if(!response.ok||!formats.length)throw new Error(data.error||'تعذر جلب صيغ YouTube');
-      format.replaceChildren(...formats.map((f,i)=>new Option(formatLabel(f),String(i))));
-      parsedYoutube={url:normalized,formats};
+      const endpoints=[
+        'https://api.vidsnap.app/parse?id='+encodeURIComponent(id),
+        'https://api.vidsnap.app/parse?url='+encodeURIComponent(normalized)
+      ];
+      let lastError='تعذر جلب صيغ YouTube';
+      for(const endpoint of endpoints){
+        try{
+          const response=await fetch(endpoint,{headers:{Accept:'application/json'}});
+          const data=await response.json().catch(()=>({}));
+          const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
+          if(response.ok&&formats.length){
+            format.replaceChildren(...formats.map((f,i)=>new Option(formatLabel(f),String(i))));
+            parsedYoutube={url:normalized,formats};
+            return;
+          }
+          lastError=data.error||lastError;
+        }catch(error){lastError=error.message||lastError}
+      }
+      throw new Error(lastError);
     };
     bar.addEventListener('submit',async event=>{
       event.preventDefault();
@@ -114,9 +127,10 @@
         setState('loading','…');
         try{
           const normalized=normalizeYoutube(value);
+          input.value=normalized;
           if(parsedYoutube.url!==normalized||!parsedYoutube.formats.length){
             await loadYoutubeFormats(normalized);
-            setState('idle','اختيار');
+            setState('idle','تنزيل');
             return;
           }
           const selected=parsedYoutube.formats[Number(format.value)];
