@@ -99,25 +99,12 @@
     const loadYoutubeFormats=async normalized=>{
       const id=normalized.match(/[?&]v=([^&]+)/)?.[1];
       if(!id)throw new Error('رابط YouTube غير صالح');
-      const endpoints=[
-        'https://api.vidsnap.app/parse?id='+encodeURIComponent(id),
-        'https://api.vidsnap.app/parse?url='+encodeURIComponent(normalized)
-      ];
-      let lastError='تعذر جلب صيغ YouTube';
-      for(const endpoint of endpoints){
-        try{
-          const response=await fetch(endpoint,{headers:{Accept:'application/json'}});
-          const data=await response.json().catch(()=>({}));
-          const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
-          if(response.ok&&formats.length){
-            format.replaceChildren(...formats.map((f,i)=>new Option(formatLabel(f),String(i))));
-            parsedYoutube={url:normalized,formats};
-            return;
-          }
-          lastError=data.error||lastError;
-        }catch(error){lastError=error.message||lastError}
-      }
-      throw new Error(lastError);
+      const response=await fetch('/api/v1/youtube/formats?url='+encodeURIComponent(normalized),{headers:{Accept:'application/json'}});
+      const data=await response.json().catch(()=>({}));
+      const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
+      if(!response.ok||!data.ok||!formats.length)throw new Error(data.error?.message||'تعذر جلب صيغ YouTube');
+      format.replaceChildren(...formats.map((f,i)=>new Option(formatLabel(f),String(i))));
+      parsedYoutube={url:normalized,formats};
     };
     bar.addEventListener('submit',async event=>{
       event.preventDefault();

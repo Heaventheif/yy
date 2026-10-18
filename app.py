@@ -14,7 +14,7 @@ import requests
 from flask import Flask, Response, g, jsonify, redirect, request
 
 from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
-from socialdl.platforms import PLATFORMS, clean_url, is_public_url
+from socialdl.platforms import PLATFORMS, clean_url, is_public_url, is_youtube_host
 from socialdl.service import resolve_media
 
 os.environ.setdefault("HOME", "/tmp")
@@ -257,6 +257,58 @@ def api_resolve():
     url = clean_url(request.args.get("url"))
     media = resolve_media(url, fresh=request.args.get("fresh") == "1")
     return _json(_public(url, media))
+
+
+@app.get("/api/v1/youtube/formats")
+def api_youtube_formats():
+    """Fetch YouTube formats server-side so the browser does not depend on VidSnap CORS."""
+    _rate_check("resolve", RATE_LIMIT)
+    raw = (request.args.get("url") or "").strip()
+    try:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        host = ""
+    if not is_youtube_host(host):
+        raise ApiError("invalid_youtube_url", "أدخل رابط YouTube صحيحًا.", 400)
+
+    match = re.search(r"(?:[?&]v=|youtu\.be/|/(?:shorts|embed|live)/)([A-Za-z0-9_-]{11})", raw)
+    if not match:
+        raise ApiError("invalid_youtube_url", "تعذر استخراج معرّف فيديو YouTube.", 400)
+    video_id = match.group(1)
+    normalized = f"https://www.youtube.com/watch?v={video_id}"
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        attempts = (
+            {"id": video_id},
+            {"url": normalized},
+        )
+        last_message = "تعذر جلب صيغ YouTube من المزود الخارجي."
+        for params in attempts:
+            try:
+                upstream = session.get(
+                    "https://api.vidsnap.app/parse",
+                    params=params,
+                    headers={"Accept": "application/json", "User-Agent": "yy/2"},
+                    timeout=(5, 35),
+                )
+            except requests.RequestException:
+                continue
+            try:
+                data = upstream.json()
+            except ValueError:
+                data = {}
+            formats = data.get("formats") if isinstance(data, dict) else None
+            if upstream.ok and isinstance(formats, list) and any(isinstance(item, dict) and item.get("url") for item in formats):
+                upstream.close()
+                return _json({"ok": True, "normalized": normalized, **data})
+            if isinstance(data, dict) and data.get("error"):
+                last_message = str(data["error"])
+            upstream.close()
+        raise ApiError("youtube_provider", last_message, 502)
+    finally:
+        session.close()
 
 
 def _batch_one(index: int, raw: object, base_url: str) -> tuple[int, dict]:
