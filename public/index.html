@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تنزيل</title>
+<style>
+:root{--bg:#fff;--fg:#000}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#fff}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 16px}
+form{display:flex;width:100%;max-width:640px;border:2px solid var(--fg)}
+input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--fg);font:inherit;padding:16px}
+input::placeholder{color:var(--fg);opacity:.45}
+button{border:0;background:var(--fg);color:var(--bg);font:inherit;font-weight:600;padding:0 28px;cursor:pointer;min-width:96px}
+button:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+button:disabled{opacity:.5;cursor:wait}
+p{height:1.4em;margin:14px 0 0;max-width:640px;width:100%;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<form id="f" autocomplete="off">
+  <input id="u" type="text" inputmode="url" dir="ltr" placeholder="الصق الرابط" aria-label="الرابط" autofocus>
+  <button id="b">تنزيل</button>
+</form>
+<p id="m" role="status" aria-live="polite"></p>
+<script>
+const f=document.getElementById('f'),u=document.getElementById('u'),b=document.getElementById('b'),m=document.getElementById('m');
+f.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const v=u.value.trim();
+  if(!v)return;
+  b.disabled=true;m.textContent='…';
+  try{
+    const r=await fetch('/api/v1/resolve?url='+encodeURIComponent(v));
+    const j=await r.json().catch(()=>({}));
+    if(!j.ok)throw new Error((j.error&&j.error.message)||'تعذر التنزيل');
+    m.textContent=j.title;
+    location.href=j.download;
+  }catch(err){m.textContent=err.message}
+  b.disabled=false;
+});
+</script>
+</body>
+</html>
