@@ -285,7 +285,7 @@ def api_youtube_formats():
                 "https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl",
                 params={"url": normalized},
                 headers={"Accept": "application/json", "User-Agent": "yy/2"},
-                timeout=(5, 35),
+                timeout=(3, 10),
             )
             toshiro_data = toshiro.json()
             result = toshiro_data.get("result") if isinstance(toshiro_data, dict) else None
@@ -329,7 +329,7 @@ def api_youtube_formats():
                     "https://api.vidsnap.app/parse",
                     params=params,
                     headers={"Accept": "application/json", "User-Agent": "yy/2"},
-                    timeout=(5, 35),
+                    timeout=(3, 10),
                 )
             except requests.RequestException:
                 continue
