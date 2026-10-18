@@ -8,8 +8,10 @@
 تجنّب N+1: كل رابط يُستخرج مرة واحدة (كاش + دمج الطلبات المتزامنة المتطابقة + كاش سلبي للفشل)،
 والدفعات تعمل بالتوازي بدل طلب لكل رابط. التفاصيل في API.md.
 """
+import html as _html
 import os
 import re
+import sys
 import uuid
 import socket
 import ipaddress
@@ -62,9 +64,10 @@ _BARE_RE = re.compile(r"^[\w-]+(\.[\w-]+)+(/\S*)?$")
 
 
 class ApiError(Exception):
-    def __init__(self, code, message, status=400, retry_after=None):
+    def __init__(self, code, message, status=400, retry_after=None, detail=None):
         super().__init__(message)
         self.code, self.message, self.status, self.retry_after = code, message, status, retry_after
+        self.detail = detail
 
 
 # ---------------------------- الروابط والأمان ----------------------------
@@ -212,22 +215,63 @@ def _needs_expand(url):
             or (host.endswith("reddit.com") and "/s/" in path))
 
 
+_FB_UAS = (_BROWSER_UA, "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)")
+_META_URL = re.compile(r"""<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)["']|"""
+                       r"""<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:url["']|"""
+                       r"""<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']""", re.I)
+_FB_VIDEO_ID = re.compile(r'"(?:video_id|videoId)"\s*:\s*"(\d{6,})"')
+
+
+def _page_target(body, base):
+    """رابط الفيديو الحقيقي من صفحة المشاركة: og:url / canonical، ثم معرّف الفيديو."""
+    for m in _META_URL.finditer(body or ""):
+        cand = urljoin(base, _html.unescape(next(g for g in m.groups() if g)))
+        path = urlsplit(cand).path
+        if cand.rstrip("/") != base.rstrip("/") and not path.startswith(("/share", "/login")) and path not in ("", "/"):
+            return cand
+    m = _FB_VIDEO_ID.search(body or "")
+    if m and "facebook.com" in base:
+        return f"https://www.facebook.com/watch/?v={m.group(1)}"
+    return None
+
+
+def _is_social(url):
+    host = (urlsplit(url).hostname or "").lower()
+    return host.endswith(("facebook.com", "instagram.com", "fb.watch", "fb.me"))
+
+
+def _hop(url):
+    """قفزة واحدة: Location، وإلا (لفيسبوك/إنستغرام) تحليل الصفحة بمتصفح ثم بزاحف فيسبوك."""
+    social = _is_social(url)
+    for ua in (_FB_UAS if social else _FB_UAS[:1]):
+        try:
+            r = requests.get(url, headers={"User-Agent": ua, "Accept-Language": "en-US,en;q=0.8"},
+                             stream=True, allow_redirects=False, timeout=(8, 10))
+        except requests.RequestException:
+            continue
+        try:
+            loc = r.headers.get("Location")
+            if r.status_code in (301, 302, 303, 307, 308) and loc:
+                return urljoin(url, loc)
+            if r.status_code == 200 and social:
+                body = r.raw.read(300_000, decode_content=True).decode("utf-8", "ignore")
+                target = _page_target(body, url)
+                if target:
+                    return target
+        finally:
+            r.close()
+    return None
+
+
 def expand_url(url, hops=6):
-    """يتبع تحويلات 301/302 يدويا (كل قفزة تُفحص ضد SSRF والمواقع المحجوبة)."""
+    """يفك روابط المشاركة/الاختصار (كل قفزة تُفحص ضد SSRF والمواقع المحجوبة)."""
     cur = url
     for _ in range(hops):
         if not _needs_expand(cur):
             return cur
-        try:
-            r = requests.get(cur, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
-                             stream=True, allow_redirects=False, timeout=(8, 10))
-        except requests.RequestException:
+        nxt = _hop(cur)
+        if not nxt:
             return cur
-        loc, code = r.headers.get("Location"), r.status_code
-        r.close()
-        if code not in (301, 302, 303, 307, 308) or not loc:
-            return cur
-        nxt = urljoin(cur, loc)
         q = dict(parse_qsl(urlsplit(nxt).query))
         if urlsplit(nxt).path.startswith("/login") and q.get("next"):   # فيسبوك: تحويل لصفحة الدخول
             nxt = q["next"]
@@ -241,11 +285,16 @@ def expand_url(url, hops=6):
 
 def _extract(url):
     try:
-        url = expand_url(url)
+        orig, url = url, expand_url(url)
         with yt_dlp.YoutubeDL(_opts()) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.YoutubeDLError as e:
-        raise ApiError(*_friendly(e))
+        code, msg, status = _friendly(e)
+        detail = re.sub(r"^ERROR:\s*", "", str(e)).strip()[:300]
+        if url != orig:
+            detail = f"{detail} [expanded: {url}]"
+        print(f"[extract] {code} {orig} :: {detail}", file=sys.stderr, flush=True)
+        raise ApiError(code, msg, status, detail=detail)
     finally:
         _pending.release()
     if info and info.get("_type") == "playlist":
@@ -362,7 +411,10 @@ def _public(url, media, base):
 
 
 def _error_body(e):
-    return {"ok": False, "error": {"code": e.code, "message": e.message}}
+    err = {"code": e.code, "message": e.message}
+    if getattr(e, "detail", None):
+        err["detail"] = e.detail          # السبب التقني (للتشخيص)
+    return {"ok": False, "error": err}
 
 
 # ---------------------------- الهيدرات المشتركة / CORS / الأخطاء ----------------------------
