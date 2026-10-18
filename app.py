@@ -305,7 +305,7 @@ def api_youtube_formats():
                         })
                 if formats:
                     toshiro.close()
-                    return _json({
+                    response = _json({
                         "ok": True,
                         "provider": "toshiro",
                         "normalized": normalized,
@@ -314,6 +314,8 @@ def api_youtube_formats():
                         "title": result.get("title") or "YouTube",
                         "formats": formats,
                     })
+                    response.headers["Cache-Control"] = "public, s-maxage=30, stale-while-revalidate=120"
+                    return response
             toshiro.close()
         except (requests.RequestException, ValueError, AttributeError):
             pass
@@ -340,7 +342,9 @@ def api_youtube_formats():
             formats = data.get("formats") if isinstance(data, dict) else None
             if upstream.ok and isinstance(formats, list) and any(isinstance(item, dict) and item.get("url") for item in formats):
                 upstream.close()
-                return _json({"ok": True, "normalized": normalized, **data})
+                response = _json({"ok": True, "provider": "vidsnap", "normalized": normalized, **data})
+                response.headers["Cache-Control"] = "public, s-maxage=30, stale-while-revalidate=120"
+                return response
             if isinstance(data, dict) and data.get("error"):
                 last_message = str(data["error"])
             upstream.close()
