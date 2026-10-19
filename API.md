@@ -112,3 +112,43 @@ curl -N -X POST 'https://YOUR-APP.vercel.app/api/v1/batch?stream=1' \
 | `REDIRECT` | `0` | `1` لتفعيل تحويل CDN افتراضيًا |
 
 Vercel يتيح بث Python، لكنه يفرض حدًا للمدة وحجم الحمولة حسب وثائقه وخطتك؛ لا يصلح هذا API كبديل عن مخزن أو خدمة نقل مخصصة للملفات الكبيرة جدًا.
+
+## YouTube (عبر مزودين خارجيين)
+
+لا يستخرج `yy` من YouTube مباشرة؛ الواجهة تطلب الصيغ من مزودين خارجيين عبر الخادم، ثم تمرر الملف عبر نفس النطاق. لا يظهر رابط المزود الخام في JSON.
+
+| الطريقة | المسار | الوصف |
+|---|---|---|
+| GET | `/api/v1/youtube/formats?url=` | قائمة الصيغ (حتى 14) مع `download_url` موقّع؛ `fresh=1` يتجاوز الكاش (30 ثانية) |
+| GET / HEAD | `/api/v1/youtube/download?t=` | بث الصيغة المختارة مع `Range`؛ عند رفض المصدر للرابط يعيد الاستخراج مرة واحدة ويجرب صيغة مطابقة |
+
+رمز `t` موقّع بـHMAC وصالح 10 دقائق (`YT_TOKEN_TTL_SEC`)؛ بعد انتهائه يعيد `410 link_expired` فتطلب الواجهة الصيغ من جديد. المزودون يُجرَّبون بالتوازي وبحسب الأولوية (`toshiro` ثم `vidsnap` ثم `piped` و`invidious` إن عُرّفت أسماء النسخ)، ومن يفشل 3 مرات متتالية يُتجاهل 45 ثانية.
+
+### غلاف الخطأ (إضافة غير كاسرة)
+
+كل خطأ يحمل الآن `retryable`، وأخطاء YouTube تحمل `details.providers` لتشخيص 502:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "youtube_providers_unavailable",
+    "message": "…",
+    "retryable": true,
+    "details": {"providers": [{"provider": "toshiro", "reason": "http_502", "status": 502}, {"provider": "vidsnap", "reason": "timeout"}]}
+  },
+  "request_id": "…"
+}
+```
+
+| الرمز | HTTP | المعنى |
+|---|---:|---|
+| `invalid_youtube_url` | 400 | الرابط ليس رابط YouTube صالحًا |
+| `youtube_providers_unavailable` | 502 | كل المزودين فشلوا أو لم يعيدوا صيغًا؛ أعد المحاولة (`Retry-After`) |
+| `youtube_timeout` | 504 | كل المزودين تجاوزوا المهلة |
+| `youtube_download_failed` | 502 | رفض المصدر الملف بعد إعادة الاستخراج مرة واحدة |
+| `youtube_no_format` | 502 | لم تعد الجودة المطلوبة متاحة |
+| `invalid_token` | 400 | رمز تنزيل مزوّر أو تالف |
+| `link_expired` | 410 | انتهت صلاحية الرمز؛ اطلب الصيغ من جديد |
+
+متغيرات بيئة إضافية: `SIGNING_SECRET` (مهم: عيّنه بقيمة عشوائية طويلة)، `YT_PROVIDERS` (ترتيب المزودين)، `PIPED_INSTANCES` و`INVIDIOUS_INSTANCES` (قائمة عناوين `https://` مفصولة بفواصل، غير مفعّلة افتراضيًا)، `YT_TOKEN_TTL_SEC`.

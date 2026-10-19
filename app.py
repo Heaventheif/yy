@@ -11,10 +11,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, urljoin, urlsplit
 
 import requests
-from flask import Flask, Response, g, jsonify, redirect, request
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory
 
 from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
-from socialdl.platforms import PLATFORMS, clean_url, is_public_url, is_youtube_host
+from socialdl import youtube as yt
+from socialdl.platforms import PLATFORMS, clean_url, is_public_url
 from socialdl.service import resolve_media
 
 os.environ.setdefault("HOME", "/tmp")
@@ -41,6 +42,7 @@ CACHE_TTL_PUBLIC = _int_env("CACHE_TTL_SEC", 75)
 REDIRECT_DEFAULT = os.getenv("REDIRECT", "0") == "1"
 CORS_ORIGIN = os.getenv("CORS_ORIGIN", "*")
 CHUNK_SIZE = 256 * 1024
+PUBLIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
 
 _BUCKETS: dict[tuple[str, str], tuple[float, float]] = {}
 _BUCKET_LOCK = threading.Lock()
@@ -89,9 +91,11 @@ def _base_url() -> str:
 
 
 def _error_body(error: ApiError) -> dict:
-    detail = {"code": error.code, "message": error.message}
+    detail = {"code": error.code, "message": error.message, "retryable": error.retryable}
     if error.upstream_status is not None:
         detail["upstream_status"] = error.upstream_status
+    if error.details:
+        detail["details"] = error.details
     return {"ok": False, "error": detail, "request_id": g.get("request_id", "")}
 
 
@@ -127,7 +131,7 @@ def _filename(media: dict) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
 
 
-def _open_upstream(media: dict, range_header: str | None, method: str = "GET"):
+def _open_upstream(media: dict, range_header: str | None, method: str = "GET", timeout: tuple = (10, 35)):
     headers = dict(media.get("headers") or {})
     if range_header:
         headers["Range"] = range_header
@@ -141,7 +145,7 @@ def _open_upstream(media: dict, range_header: str | None, method: str = "GET"):
             try:
                 upstream = session.request(
                     method, target, headers=headers, stream=True,
-                    allow_redirects=False, timeout=(10, 35),
+                    allow_redirects=False, timeout=timeout,
                 )
             except requests.RequestException as exc:
                 raise classify_extractor_error(exc) from None
@@ -168,6 +172,27 @@ def _stream(upstream, session):
     finally:
         upstream.close()
         session.close()
+
+
+def _upstream_response(upstream, session, media: dict):
+    """Turn an opened upstream response into a streamed attachment (GET) or headers only (HEAD)."""
+    response = Response(
+        _stream(upstream, session) if request.method == "GET" else b"",
+        status=upstream.status_code,
+        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+        direct_passthrough=True,
+    )
+    for header in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"):
+        if upstream.headers.get(header):
+            response.headers[header] = upstream.headers[header]
+    response.headers.setdefault("Accept-Ranges", "bytes")
+    response.headers["Content-Disposition"] = _filename(media)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Accel-Buffering"] = "no"
+    if request.method == "HEAD":
+        upstream.close()
+        session.close()
+    return response
 
 
 @app.before_request
@@ -241,6 +266,7 @@ def health():
         "ok": True,
         "version": VERSION,
         "youtube": "disabled",
+        "youtube_via_providers": yt._chain(),
         "platforms": list(PLATFORMS),
         "limits": {
             "resolve_per_minute": RATE_LIMIT,
@@ -261,96 +287,88 @@ def api_resolve():
 
 @app.get("/api/v1/youtube/formats")
 def api_youtube_formats():
-    """Fetch YouTube formats server-side so the browser does not depend on VidSnap CORS."""
+    """List downloadable YouTube formats. Every download link points back at this service."""
     _rate_check("resolve", RATE_LIMIT)
-    raw = (request.args.get("url") or "").strip()
-    try:
-        parsed = urlsplit(raw)
-        host = (parsed.hostname or "").lower().rstrip(".")
-    except ValueError:
-        host = ""
-    if not is_youtube_host(host):
-        raise ApiError("invalid_youtube_url", "أدخل رابط YouTube صحيحًا.", 400)
+    video_id = yt.extract_video_id(request.args.get("url"))
+    found = yt.lookup(video_id, fresh=request.args.get("fresh") == "1")
+    base_url = _base_url()
+    formats = [{
+        "id": fmt["id"],
+        "kind": fmt["kind"],
+        "quality": fmt["quality"],
+        "qualityLabel": fmt["quality"],
+        "mimeType": fmt["mime"],
+        "bitrate": fmt["bitrate"],
+        "size": fmt["size"],
+        "provider": fmt["provider"],
+        "download_url": f"{base_url}/api/v1/youtube/download?t={yt.make_token(video_id, found['title'], fmt)}",
+    } for fmt in found["formats"]]
+    return _json({
+        "ok": True,
+        "provider": found["provider"],
+        "platform": "youtube",
+        "videoId": video_id,
+        "normalized": found["normalized"],
+        "title": found["title"],
+        "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        "duration": found["duration"],
+        "formats": formats,
+        "cache": found["cache"],
+        "expires_in": yt.TOKEN_TTL,
+    })
 
-    match = re.search(r"(?:[?&]v=|youtu\.be/|/(?:shorts|embed|live)/)([A-Za-z0-9_-]{11})", raw)
-    if not match:
-        raise ApiError("invalid_youtube_url", "تعذر استخراج معرّف فيديو YouTube.", 400)
-    video_id = match.group(1)
-    normalized = f"https://www.youtube.com/watch?v={video_id}"
-    session = requests.Session()
-    session.trust_env = False
-    try:
-        try:
-            toshiro = session.get(
-                "https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl",
-                params={"url": normalized},
-                headers={"Accept": "application/json", "User-Agent": "yy/2"},
-                timeout=(3, 10),
-            )
-            toshiro_data = toshiro.json()
-            result = toshiro_data.get("result") if isinstance(toshiro_data, dict) else None
-            if toshiro.ok and toshiro_data.get("success") and isinstance(result, dict) and result.get("status"):
-                seen = set()
-                formats = []
-                for label, key in (("فيديو", "video"), ("جودة عالية", "high_quality"), ("جودة منخفضة", "low_quality"), ("فيديو", "url")):
-                    media_url = result.get(key)
-                    if isinstance(media_url, str) and media_url.startswith(("http://", "https://")) and media_url not in seen:
-                        seen.add(media_url)
-                        formats.append({
-                            "kind": "progressive",
-                            "qualityLabel": label,
-                            "mimeType": "video/mp4",
-                            "url": media_url,
-                            "download_url": media_url,
-                        })
-                if formats:
-                    toshiro.close()
-                    response = _json({
-                        "ok": True,
-                        "provider": "toshiro",
-                        "normalized": normalized,
-                        "platform": "youtube",
-                        "videoId": video_id,
-                        "title": result.get("title") or "YouTube",
-                        "formats": formats,
-                    })
-                    response.headers["Cache-Control"] = "public, s-maxage=30, stale-while-revalidate=120"
-                    return response
-            toshiro.close()
-        except (requests.RequestException, ValueError, AttributeError):
-            pass
 
-        attempts = (
-            {"id": video_id},
-            {"url": normalized},
-        )
-        last_message = "تعذر جلب صيغ YouTube من المزود الخارجي."
-        for params in attempts:
-            try:
-                upstream = session.get(
-                    "https://api.vidsnap.app/parse",
-                    params=params,
-                    headers={"Accept": "application/json", "User-Agent": "yy/2"},
-                    timeout=(3, 10),
-                )
-            except requests.RequestException:
-                continue
-            try:
-                data = upstream.json()
-            except ValueError:
-                data = {}
-            formats = data.get("formats") if isinstance(data, dict) else None
-            if upstream.ok and isinstance(formats, list) and any(isinstance(item, dict) and item.get("url") for item in formats):
-                upstream.close()
-                response = _json({"ok": True, "provider": "vidsnap", "normalized": normalized, **data})
-                response.headers["Cache-Control"] = "public, s-maxage=30, stale-while-revalidate=120"
-                return response
-            if isinstance(data, dict) and data.get("error"):
-                last_message = str(data["error"])
+@app.route("/api/v1/youtube/download", methods=["GET", "HEAD"])
+def api_youtube_download():
+    """Stream a chosen YouTube format. On a rejected link, re-resolve once and retry."""
+    token = yt.read_token(request.args.get("t"))
+    range_header = request.headers.get("Range")
+    if range_header and not re.fullmatch(r"bytes=\d*-\d*", range_header.strip()):
+        raise ApiError("invalid_range", "نطاق التنزيل غير صالح.", 416)
+    if not range_header or range_header.startswith("bytes=0-"):
+        _rate_check("download", DL_RATE_LIMIT)
+
+    def attempt(target_url: str, fmt_like: dict):
+        media = {"url": target_url, "headers": {"User-Agent": yt.UA},
+                 **yt.file_info(token.get("t") or "YouTube", fmt_like)}
+        upstream, session = _open_upstream(media, range_header, request.method, timeout=(4, 12))
+        ctype = (upstream.headers.get("Content-Type") or "").lower()
+        if upstream.status_code not in (200, 206, 416) or ctype.startswith(("text/", "application/json")):
+            status = upstream.status_code
             upstream.close()
-        raise ApiError("youtube_provider", last_message, 502)
-    finally:
-        session.close()
+            session.close()
+            raise ApiError("youtube_source_rejected", "رفض مصدر الملف الرابط الحالي.", 502,
+                           upstream_status=status if status >= 400 else None)
+        return media, upstream, session
+
+    try:
+        media, upstream, session = attempt(token["u"], token)
+    except ApiError as first:
+        if first.code in ("forbidden_url", "invalid_range"):
+            raise
+        found = yt.lookup(token["v"], fresh=True)
+        fmt = yt.match_format(found["formats"], token)
+        if not fmt:
+            raise ApiError("youtube_no_format", "لم تعد هذه الجودة متاحة؛ اختر جودة أخرى.", 502, retry_after=3) from None
+        try:
+            media, upstream, session = attempt(fmt["url"], {"m": fmt["mime"], "q": fmt["quality"]})
+        except ApiError as second:
+            raise ApiError("youtube_download_failed",
+                           "تعذر بدء التنزيل من المصدر بعد محاولتين؛ جرّب جودة أخرى أو أعد المحاولة لاحقًا.",
+                           502, retry_after=5, upstream_status=second.upstream_status or first.upstream_status,
+                           details={"first": first.code, "second": second.code}) from None
+    return _upstream_response(upstream, session, media)
+
+
+@app.get("/")
+def index_page():
+    """Local development only; on Vercel the static public/ files are served by the edge."""
+    return send_from_directory(PUBLIC_DIR, "index.html")
+
+
+@app.get("/img/<path:name>")
+def static_img(name: str):
+    return send_from_directory(os.path.join(PUBLIC_DIR, "img"), name)
 
 
 def _batch_one(index: int, raw: object, base_url: str) -> tuple[int, dict]:
@@ -438,23 +456,7 @@ def api_download():
             session.close()
         raise
 
-    response = Response(
-        _stream(upstream, session) if request.method == "GET" else b"",
-        status=upstream.status_code,
-        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
-        direct_passthrough=True,
-    )
-    for header in ("Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"):
-        if upstream.headers.get(header):
-            response.headers[header] = upstream.headers[header]
-    response.headers.setdefault("Accept-Ranges", "bytes")
-    response.headers["Content-Disposition"] = _filename(media)
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["X-Accel-Buffering"] = "no"
-    if request.method == "HEAD":
-        upstream.close()
-        session.close()
-    return response
+    return _upstream_response(upstream, session, media)
 
 
 if __name__ == "__main__":

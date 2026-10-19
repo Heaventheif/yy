@@ -2,160 +2,397 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#000000">
-  <meta name="description" content="تنزيل الوسائط من رابط عام">
-  <title>تنزيل</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4a3220">
+  <meta name="description" content="ألصق رابط الفيديو واختر الجودة ثم نزّله">
+  <title>نزّل — تنزيل الفيديو والصوت من الرابط</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">
   <style>
-    :root{color-scheme:dark;background:#000}
+    :root{
+      --wood:#6f4a2b; --wood-dark:#3b2616;
+      --slate:#26322c;
+      --chalk:#f1efe6; --chalk-dim:#cfd3c8; --yellow:#f2d675; --blue:#9fd0ea; --pink:#f0aaa4;
+      --paper:#f0e8d2; --paper-edge:#d9cdb0; --ink:#2b2a24; --ink-soft:#5d5a4d; --rule:#a9c3d6; --margin:#d98b82;
+      --title:"Aref Ruqaa","Noto Naskh Arabic","Segoe UI",serif;
+      --ui:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
+    }
     *{box-sizing:border-box}
-    html,body{width:100%;min-width:320px;min-height:100%;margin:0;background:#000}
-    body{display:grid;place-items:center;min-height:100vh;padding:20px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
-    .bar{display:flex;width:min(820px,100%);height:58px;padding:5px;background:#fff;border-radius:12px;box-shadow:0 12px 36px rgba(255,255,255,.08)}
-    input{min-width:0;flex:1;padding:0 15px;border:0;outline:0;background:#fff;color:#000;font:15px system-ui;text-align:left;direction:ltr}
-    input::placeholder{color:#777}
-    button{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:#000;color:#fff;font:14px system-ui;cursor:pointer}
-    button:disabled{opacity:.55;cursor:wait}
-    .submit{min-width:112px;padding:0 18px}
-    .download{width:100%;height:100%;font-size:15px}
-    .bar[data-state="error"]{outline:2px solid #d33}
-    .bar[data-state="loading"] .submit{cursor:wait}
-    .progress{position:relative;width:100%;height:100%;overflow:hidden;border-radius:8px;background:#e7e7e7}
-    .progress-fill{height:100%;width:0;background:#000;transition:width .12s ease}
-    .progress-text{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font:13px system-ui;mix-blend-mode:difference}
-    .progress[data-indeterminate="true"] .progress-fill{width:38%;animation:progress 1.1s ease-in-out infinite}
+    html{-webkit-text-size-adjust:100%}
+    body{margin:0;min-height:100vh;min-height:100dvh;color:var(--chalk);font-family:var(--ui);
+      background:var(--wood) url(/img/wood.jpg) center/800px repeat;
+      padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    button,input{font:inherit;color:inherit}
+    .ic{width:1.25em;height:1.25em;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .rough{filter:url(#chalk)}
+    :focus-visible{outline:3px solid var(--blue);outline-offset:2px}
 
-    .backdrop{position:fixed;inset:0;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.76);backdrop-filter:blur(8px);z-index:5}
-    .backdrop[hidden]{display:none}
-    .modal{width:min(560px,100%);max-height:min(680px,calc(100vh - 36px));overflow:auto;background:#101010;color:#fff;border:1px solid #292929;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.7);animation:pop .18s ease-out}
-    .modal-head{display:flex;align-items:center;gap:12px;padding:20px 20px 14px;border-bottom:1px solid #262626}
-    .modal-title{flex:1;font-size:18px;font-weight:700}
-    .modal-subtitle{margin-top:4px;color:#8d8d8d;font-size:12px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .close{width:34px;height:34px;border:1px solid #333;border-radius:50%;background:#181818;color:#aaa;font-size:20px;line-height:1}
-    .close:hover{background:#252525;color:#fff}
-    .modal-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#fff;color:#000}
-    .formats{display:grid;gap:10px;padding:18px}
-    .format-card{display:flex;align-items:center;gap:13px;width:100%;padding:13px 14px;border:1px solid #2e2e2e;border-radius:14px;background:#171717;color:#fff;text-align:right;transition:transform .15s,border-color .15s,background .15s}
-    .format-card:hover{transform:translateY(-2px);border-color:#fff;background:#222}
-    .format-icon{display:grid;place-items:center;flex:0 0 42px;width:42px;height:42px;border-radius:12px;background:#fff;color:#000}
-    .format-info{min-width:0;flex:1}
-    .format-name{display:block;font-size:15px;font-weight:700}
-    .format-meta{display:block;margin-top:4px;color:#999;font-size:12px;direction:ltr;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .format-arrow{color:#777;font-size:20px}
-    .empty{padding:30px;text-align:center;color:#aaa}
-    .modal-foot{padding:0 18px 18px;color:#777;font-size:11px;text-align:center}
-    @keyframes progress{0%{transform:translateX(-150%)}100%{transform:translateX(300%)}}
-    @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
-    @media(max-width:560px){body{padding:12px}.bar{height:54px}.submit{min-width:76px;padding:0 10px;font-size:13px}input{padding:0 8px;font-size:13px}.modal-head{padding:16px}.formats{padding:14px}.format-card{padding:11px}}
+    /* ---------- the physical board ---------- */
+    .frame{display:grid;grid-template-rows:1fr auto;min-height:100vh;min-height:100dvh;padding:16px 16px 0}
+    .board{position:relative;display:grid;place-items:center;padding:clamp(24px,5vw,56px) 16px;overflow:hidden;
+      border-radius:3px;background:#26322c url(/img/board.jpg) center/cover no-repeat;
+      box-shadow:inset 0 0 0 2px rgba(0,0,0,.45),inset 0 10px 40px rgba(0,0,0,.55),inset 0 -6px 30px rgba(0,0,0,.35),0 0 0 3px var(--wood-dark);
+      animation:board-in .6s ease-out both}
+    .tray{position:relative;display:flex;align-items:flex-end;gap:14px;height:34px;margin:0 -16px;padding:0 5vw 2px;
+      background:linear-gradient(#8a6039,#5d3d22 55%,#3b2616),url(/img/wood.jpg);background-blend-mode:multiply;
+      box-shadow:0 -3px 0 rgba(0,0,0,.35) inset,0 6px 14px rgba(0,0,0,.45)}
+    .chalk-stick{width:46px;height:11px;border-radius:5px 3px 3px 5px;transform:rotate(-2deg);box-shadow:0 2px 3px rgba(0,0,0,.5)}
+    .chalk-stick:nth-child(1){background:var(--chalk)} .chalk-stick:nth-child(2){background:var(--yellow);width:34px;transform:rotate(1.5deg)}
+    .chalk-stick:nth-child(3){background:var(--blue);width:40px;transform:rotate(-1deg)}
+    .eraser{margin-inline-start:auto;width:74px;height:20px;border-radius:3px;background:linear-gradient(#3d3d3a 0 38%,#c9b27a 38%);box-shadow:0 3px 4px rgba(0,0,0,.5)}
+
+    .stage{width:min(760px,100%);display:grid;justify-items:center;gap:clamp(22px,4vw,34px)}
+
+    /* ---------- title: the one orchestrated moment ---------- */
+    .title{margin:0;text-align:center;font:700 clamp(54px,11vw,92px)/1.1 var(--title);color:var(--chalk);
+      text-shadow:0 0 1px rgba(255,255,255,.6),0 0 14px rgba(241,239,230,.12);animation:board-in .5s .2s ease-out both}
+    .underline{display:block;width:min(300px,64%);height:18px;margin:-4px auto 0;color:var(--yellow);overflow:visible}
+    .underline path{fill:none;stroke:currentColor;stroke-width:4;stroke-linecap:round;stroke-dasharray:340;stroke-dashoffset:340;animation:write 1s .75s cubic-bezier(.5,0,.2,1) forwards}
+    .tagline{margin:6px 0 0;text-align:center;color:var(--chalk-dim);font-size:clamp(15px,2.4vw,18px)}
+
+    /* ---------- index card with the input ---------- */
+    .card{position:relative;width:min(640px,100%);padding:30px 22px 24px;color:var(--ink);transform:rotate(-1deg);
+      background:var(--paper);
+      border-radius:3px;box-shadow:0 1px 0 var(--paper-edge) inset,0 14px 28px rgba(0,0,0,.5),0 2px 4px rgba(0,0,0,.4);
+      animation:drop .8s 1.05s cubic-bezier(.2,.9,.3,1.15) both}
+    .pin{position:absolute;top:-13px;inset-inline-start:50%;margin-inline-start:-14px;width:28px;height:28px;color:#c9423a;
+      filter:drop-shadow(0 3px 2px rgba(0,0,0,.45))}
+    .pin .ic{width:28px;height:28px;fill:currentColor;stroke:#7a1f1a}
+    .card label{display:block;margin:0 0 8px;font:700 22px var(--title);color:var(--ink)}
+    .bar{display:flex;gap:10px;align-items:flex-end}
+    .bar .grow{flex:1;min-width:0}
+    .field{display:flex;min-width:0;align-items:center;gap:4px;padding:0 6px 0 4px;border:2px solid var(--ink);border-radius:6px;background:rgba(255,255,255,.55)}
+    .field:focus-within{border-color:#1d6fa5;box-shadow:0 0 0 3px rgba(29,111,165,.25)}
+    .bar[data-state="error"] .field{border-color:#b3261e}
+    input{flex:1;min-width:0;height:52px;padding:0 8px;border:0;outline:0;background:transparent;color:var(--ink);direction:ltr;text-align:left;font-size:16px}
+    input:focus-visible{outline:0}
+    input::placeholder{color:#7b7664}
+    .icon-btn{display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:6px;background:transparent;color:var(--ink-soft);cursor:pointer}
+    .icon-btn:hover{background:rgba(0,0,0,.08);color:var(--ink)}
+    .go{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:116px;height:56px;padding:0 20px;border:0;border-radius:6px;cursor:pointer;
+      background:var(--slate);color:var(--chalk);font-weight:600;font-size:16px;box-shadow:0 3px 0 #0f1713;transition:transform .12s,box-shadow .12s}
+    .go:hover{background:#2f3f37}
+    .go:active{transform:translateY(2px);box-shadow:0 1px 0 #0f1713}
+    .go:disabled{cursor:progress;opacity:.85}
+    .dots{display:inline-flex;gap:4px}
+    .dots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:blink 1s infinite}
+    .dots i:nth-child(2){animation-delay:.15s} .dots i:nth-child(3){animation-delay:.3s}
+    .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+    .hint{margin:12px 0 0;color:var(--ink-soft);font-size:13px;line-height:1.7}
+
+    /* ---------- supported sites, drawn in chalk ---------- */
+    .sites{display:flex;flex-wrap:wrap;justify-content:center;gap:10px 22px;margin:0;padding:0;list-style:none;animation:board-in .6s 1.5s ease-out both}
+    .sites li{display:grid;justify-items:center;gap:6px;width:76px;color:var(--chalk);font-size:13px}
+    .sites .ic{width:34px;height:34px;stroke-width:1.6}
+    .sites li:nth-child(1) .ic{color:var(--pink)} .sites li:nth-child(2) .ic{color:var(--blue)} .sites li:nth-child(3) .ic{color:var(--yellow)}
+    .sites li:nth-child(4) .ic{color:var(--chalk)} .sites li:nth-child(5) .ic{color:var(--pink)} .sites li:nth-child(6) .ic{color:var(--blue)}
+
+    /* ---------- popup ---------- */
+    dialog{width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;border:0;background:transparent;color:var(--ink);overflow:visible}
+    dialog::backdrop{background:rgba(8,12,10,.66);backdrop-filter:blur(3px)}
+    dialog[open] .sheet{animation:sheet-in .38s cubic-bezier(.2,.9,.3,1.15) both}
+    .sheet{position:relative;max-height:calc(100dvh - 24px);overflow:auto;padding:26px 22px 20px;border-radius:3px;transform:rotate(-.5deg);
+      background:var(--paper);box-shadow:0 22px 50px rgba(0,0,0,.6),0 2px 4px rgba(0,0,0,.4)}
+    .sheet::before{content:"";position:absolute;top:-11px;inset-inline-start:50%;width:96px;height:24px;margin-inline-start:-48px;transform:rotate(-2deg);
+      background:rgba(224,214,168,.78);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+    .sheet-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:14px}
+    .badge{display:grid;place-items:center;flex:none;width:44px;height:44px;border-radius:50%;border:2px solid var(--ink);color:var(--ink)}
+    .badge .ic{width:24px;height:24px}
+    [data-tone="error"] .badge{border-color:#b3261e;color:#b3261e}
+    [data-tone="ok"] .badge{border-color:#2d6a3d;color:#2d6a3d}
+    .sheet-title{flex:1;min-width:0}
+    .sheet-title h2{margin:0;font:700 24px/1.35 var(--title);overflow-wrap:anywhere}
+    .sheet-title p{margin:2px 0 0;color:var(--ink-soft);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+    .close{margin-inline-start:auto}
+    .photo{display:flex;gap:14px;align-items:center;margin:0 0 16px;padding:8px;background:#fff;border-radius:2px;box-shadow:0 3px 8px rgba(0,0,0,.3);transform:rotate(.8deg)}
+    .photo img{width:112px;aspect-ratio:16/9;object-fit:cover;background:#ddd}
+    .photo span{font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+    .group{margin:14px 0 6px;font:700 17px var(--title);color:var(--ink-soft)}
+    .list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+    .row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:2px solid var(--ink);border-radius:6px;background:rgba(255,255,255,.55);color:var(--ink);text-align:start;cursor:pointer;transition:transform .12s,background .12s}
+    .row:hover{background:#fff;transform:translateX(-3px)}
+    .row .ic{width:22px;height:22px}
+    .row b{font-size:16px;font-weight:600}
+    .row small{display:flex;flex-wrap:wrap;gap:2px 12px;margin-top:2px;color:var(--ink-soft);font-size:12.5px}
+    .row .grow{flex:1;min-width:0}
+    details summary{margin:14px 0 6px;font:700 17px var(--title);color:var(--ink-soft);cursor:pointer}
+    .stats{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0 0 16px;color:var(--ink-soft);font-size:14px}
+    .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border:2px solid var(--ink);border-radius:6px;background:transparent;color:var(--ink);font-weight:600;cursor:pointer}
+    .btn:hover{background:rgba(0,0,0,.07)}
+    .btn.primary{background:var(--slate);border-color:var(--slate);color:var(--chalk);box-shadow:0 3px 0 #0f1713}
+    .btn.primary:hover{background:#2f3f37}
+    .notice{margin:0;padding:10px 12px;border-right:4px solid #b3261e;background:rgba(179,38,30,.08);font-size:14px;line-height:1.7}
+    .diag{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:4px;font-size:13px;color:var(--ink-soft)}
+    .diag li{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px dashed var(--paper-edge)}
+    .meta{margin:12px 0 0;color:var(--ink-soft);font-size:12px;direction:ltr;text-align:start;overflow-wrap:anywhere}
+    .track{height:16px;margin:8px 0 6px;border:2px solid var(--ink);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.5)}
+    .fill{height:100%;width:0;background:var(--ink);transition:width .15s linear}
+    .track[data-indeterminate="true"] .fill{width:36%;animation:slide 1.1s ease-in-out infinite}
+    .progress-text{display:flex;justify-content:space-between;color:var(--ink-soft);font-size:13px}
+
+    @keyframes board-in{from{opacity:0}to{opacity:1}}
+    @keyframes write{to{stroke-dashoffset:0}}
+    @keyframes drop{0%{opacity:0;transform:translateY(-70px) rotate(-5deg)}100%{opacity:1;transform:rotate(-1deg)}}
+    @keyframes sheet-in{0%{opacity:0;transform:translateY(-30px) rotate(-3deg)}100%{opacity:1;transform:rotate(-.5deg)}}
+    @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+    @keyframes slide{0%{transform:translateX(160%)}100%{transform:translateX(-160%)}}
+
+    @media (max-width:560px){
+      .frame{padding:8px 8px 0}.tray{margin:0 -8px;height:28px}
+      .card{padding:26px 14px 18px}.bar{flex-direction:column;align-items:stretch}
+      .sites li{width:64px;font-size:12px}.sites .ic{width:30px;height:30px}
+      .photo{flex-direction:column;align-items:stretch}.photo img{width:100%}
+      .sheet{padding:24px 14px 16px}
+    }
+    @media (prefers-reduced-motion:reduce){
+      *,*::before,*::after{animation-duration:.001ms!important;animation-delay:0s!important;animation-iteration-count:1!important;transition:none!important}
+      .underline path{stroke-dashoffset:0}
+    }
   </style>
 </head>
 <body>
-  <form class="bar" id="bar" autocomplete="off" novalidate>
-    <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="ألصق الرابط" aria-label="الرابط" required>
-    <button id="submit" class="submit" type="submit">تنزيل</button>
-  </form>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="chalk" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="4" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="2.2"/>
+      </filter>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19.5h14"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-paste" viewBox="0 0 24 24"><path d="M9 4h6v3H9zM7 5.5H6a1 1 0 0 0-1 1V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1h-1"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+      <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zM19 16a3 3 0 1 1-3-3 3 3 0 0 1 3 3z"/></symbol>
+      <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM17 9l4 6M21 9l-4 6"/></symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4 21.5 20h-19zM12 10v4.5M12 17.4v.1"/></symbol>
+      <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M8 3h8l-1.4 6.2L18 13H6l3.4-3.8zM12 13v8"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5"/></symbol>
+      <symbol id="i-youtube" viewBox="0 0 24 24"><path d="M3 8a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3zM10 9l5 3-5 3z"/></symbol>
+      <symbol id="i-facebook" viewBox="0 0 24 24"><path d="M14.5 21v-8h2.7l.5-3.3h-3.2V7.7c0-1 .4-1.7 1.8-1.7h1.5V3.2A19 19 0 0 0 15.4 3c-2.6 0-4.3 1.6-4.3 4.4v2.3H8.3V13h2.8v8z"/></symbol>
+      <symbol id="i-instagram" viewBox="0 0 24 24"><path d="M7 3h10a4 4 0 0 1 4 4v10a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4zM12 8a4 4 0 1 0 .01 0zM17.2 6.8v.1"/></symbol>
+      <symbol id="i-tiktok" viewBox="0 0 24 24"><path d="M14 3v11.5a3.5 3.5 0 1 1-3.5-3.5M14 3c.4 2.6 2 4.2 5 4.5"/></symbol>
+      <symbol id="i-reddit" viewBox="0 0 24 24"><path d="M12 9c-4 0-7 2.2-7 5s3 5 7 5 7-2.2 7-5-3-5-7-5zM12 9l1-5 4 1M9.5 13.5v.1M14.5 13.5v.1M9.6 16.6c1.4 1 3.4 1 4.8 0M19.2 11.4a1.7 1.7 0 1 0 2 2.2M4.8 11.4a1.7 1.7 0 1 1-2 2.2"/></symbol>
+      <symbol id="i-soundcloud" viewBox="0 0 24 24"><path d="M7 18h10.5a3.5 3.5 0 0 0 .5-6.96A5.5 5.5 0 0 0 7.4 9.6 4.2 4.2 0 0 0 7 18z"/></symbol>
+    </defs>
+  </svg>
 
-  <div class="backdrop" id="backdrop" hidden>
-    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <header class="modal-head">
-        <span class="modal-icon" aria-hidden="true" id="modal-icon"></span>
-        <div class="modal-title"><div id="modal-title">اختر الصيغة والجودة</div><div class="modal-subtitle" id="modal-subtitle"></div></div>
-        <button class="close" id="close-modal" type="button" aria-label="إغلاق">×</button>
-      </header>
-      <div class="formats" id="formats"></div>
-      <div class="modal-foot">اختر بطاقة للبدء بالتنزيل</div>
-    </section>
+  <div class="frame">
+    <main class="board">
+      <div class="stage">
+        <header>
+          <h1 class="title rough">نزّل</h1>
+          <svg class="underline rough" viewBox="0 0 300 18" aria-hidden="true"><path d="M4 11c40-7 78-8 120-5 55 4 110 5 172-2"/></svg>
+          <p class="tagline">ألصق رابط الفيديو، ثم اختر الجودة</p>
+        </header>
+
+        <section class="card" aria-label="إدخال الرابط">
+          <span class="pin" aria-hidden="true"><svg class="ic"><use href="#i-pin"/></svg></span>
+          <form id="bar" class="bar" autocomplete="off" novalidate>
+            <div class="grow">
+              <label for="url">الرابط</label>
+              <div class="field">
+                <button id="paste" class="icon-btn" type="button" aria-label="لصق من الحافظة"><svg class="ic"><use href="#i-paste"/></svg></button>
+                <input id="url" name="url" type="url" inputmode="url" dir="ltr" placeholder="https://" aria-describedby="hint" required>
+              </div>
+            </div>
+            <button id="submit" class="go" type="submit"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg><span id="submit-text">تنزيل</span></button>
+          </form>
+          <p class="hint" id="hint">للمحتوى الذي تملكه أو لديك إذن بتنزيله. المنشورات الخاصة لا يمكن تنزيلها.</p>
+        </section>
+
+        <ul class="sites" aria-label="المواقع المدعومة">
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-youtube"/></svg>يوتيوب</li>
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-facebook"/></svg>فيسبوك</li>
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-instagram"/></svg>إنستغرام</li>
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-tiktok"/></svg>تيك توك</li>
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-reddit"/></svg>ريديت</li>
+          <li><svg class="ic rough" aria-hidden="true"><use href="#i-soundcloud"/></svg>ساوند كلاود</li>
+        </ul>
+      </div>
+    </main>
+    <div class="tray" aria-hidden="true"><i class="chalk-stick"></i><i class="chalk-stick"></i><i class="chalk-stick"></i><i class="eraser"></i></div>
   </div>
 
+  <dialog id="dlg" aria-labelledby="dlg-title">
+    <div class="sheet" id="view" data-tone=""></div>
+  </dialog>
+
   <script>
-    const bar=document.querySelector('#bar');
-    const input=document.querySelector('#url');
-    const submit=document.querySelector('#submit');
-    const backdrop=document.querySelector('#backdrop');
-    const formatsBox=document.querySelector('#formats');
-    const modalSubtitle=document.querySelector('#modal-subtitle');
-    const closeModal=document.querySelector('#close-modal');
-    let parsedYoutube={url:'',formats:[]};
-    const youtube=/^(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
-    const isYoutube=value=>{try{return youtube.test(new URL(value).hostname)}catch{return false}};
-    const normalizeYoutube=value=>{
-      const url=new URL(value);const host=url.hostname.toLowerCase();
-      if(host==='youtu.be'){const id=url.pathname.split('/').filter(Boolean)[0];return id?'https://www.youtube.com/watch?v='+encodeURIComponent(id):value}
-      if(/youtube(?:-nocookie)?\.com$/i.test(host)){
-        const match=url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/i);
-        if(match)return 'https://www.youtube.com/watch?v='+encodeURIComponent(match[1]);
-        const id=url.searchParams.get('v');
-        if(id)return 'https://www.youtube.com/watch?v='+encodeURIComponent(id);
+  (()=>{
+    const $=s=>document.querySelector(s);
+    const bar=$('#bar'),input=$('#url'),submit=$('#submit'),submitText=$('#submit-text'),pasteBtn=$('#paste'),dlg=$('#dlg'),view=$('#view');
+    const MAX_BLOB=150*1024*1024;
+    let currentDownload=null,lastAction=null;
+
+    const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const ic=(name,extra='')=>`<svg class="ic ${extra}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    const ar=n=>new Intl.NumberFormat('ar-EG').format(n);
+    const bytes=n=>{if(!n)return'';const u=['بايت','ك.ب','م.ب','ج.ب'];let i=0,v=n;while(v>=1024&&i<3){v/=1024;i++}return ar(+v.toFixed(i>1?1:0))+' '+u[i]};
+    const clock=s=>{if(!s)return'';const m=Math.floor(s/60),r=Math.round(s%60);return ar(m)+':'+ar(r).padStart(2,'٠')};
+
+    const youtubeHost=/^(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)$/i;
+    const isYoutube=v=>{try{return youtubeHost.test(new URL(v).hostname)}catch{return false}};
+    const findUrl=raw=>{const m=String(raw).match(/https?:\/\/[^\s<>"']+/i);return m?m[0].replace(/[.,;)!?]+$/,''):String(raw).trim()};
+
+    const REASONS={timeout:'انتهت المهلة',unreachable:'تعذر الاتصال',empty:'لم يرجع أي صيغة',bad_response:'ردّ غير مفهوم',error:'خطأ داخلي',not_configured:'غير مفعّل'};
+    const reasonText=r=>REASONS[r]||(/^http_(\d+)/.test(r)?'أعاد الخطأ '+r.slice(5):r);
+
+    class Fail extends Error{constructor(o){super(o.message);Object.assign(this,o)}}
+    const failFrom=(response,data)=>{
+      const e=(data&&data.error)||{};
+      return new Fail({code:e.code||'http_'+response.status,message:e.message||'تعذر إكمال الطلب.',status:response.status,
+        retryable:e.retryable??response.status>=500,details:e.details,requestId:(data&&data.request_id)||response.headers.get('x-request-id')||'',
+        retryAfter:Number(response.headers.get('retry-after'))||0});
+    };
+    const networkFail=err=>new Fail({code:err&&err.name==='AbortError'?'client_timeout':'network',status:0,retryable:true,
+      message:err&&err.name==='AbortError'?'استغرق الخادم وقتًا أطول من المسموح.':'تعذر الاتصال بالخادم؛ تحقق من الإنترنت.'});
+
+    const getJson=async(url,ms=14000)=>{
+      const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),ms);
+      try{
+        let response;
+        try{response=await fetch(url,{headers:{Accept:'application/json'},signal:ctl.signal})}catch(err){throw networkFail(err)}
+        const data=await response.json().catch(()=>null);
+        if(!response.ok||!data||data.ok===false)throw failFrom(response,data);
+        return data;
+      }finally{clearTimeout(timer)}
+    };
+    /* one automatic retry for transient provider failures (502/503/504) */
+    const getJsonRetry=async url=>{
+      const t0=Date.now();
+      try{return await getJson(url)}
+      catch(err){
+        if(!(err instanceof Fail)||!err.retryable||![502,503,504].includes(err.status)||Date.now()-t0>7000)throw err;
+        await new Promise(r=>setTimeout(r,Math.min(Math.max(err.retryAfter,1),3)*1000));
+        return getJson(url+(url.includes('?')?'&':'?')+'fresh=1');
       }
-      return value;
     };
-    const setState=(state,text)=>{bar.dataset.state=state;submit.textContent=text;submit.disabled=state==='loading'};
-    const resetFormats=()=>{parsedYoutube={url:'',formats:[]}};
-    const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const iconFor=f=>{
-      const audio=f.kind==='audio'||String(f.mimeType||'').startsWith('audio');
-      return audio?'♫':'▶';
+
+    /* ---------- popup views ---------- */
+    const head=(icon,title,sub)=>`<div class="sheet-head"><span class="badge">${ic(icon)}</span><div class="sheet-title"><h2 id="dlg-title">${esc(title)}</h2>${sub?`<p>${sub}</p>`:''}</div><button class="icon-btn close" type="button" data-close aria-label="إغلاق">${ic('close')}</button></div>`;
+    const open=(html,tone='')=>{view.dataset.tone=tone;view.innerHTML=html;if(!dlg.open)dlg.showModal();
+      const first=view.querySelector('[data-autofocus]')||view.querySelector('.close');first&&first.focus({preventScroll:true})};
+    const closeAll=()=>{if(currentDownload){currentDownload.abort();currentDownload=null}if(dlg.open)dlg.close()};
+    dlg.addEventListener('click',e=>{if(e.target===dlg)closeAll()});
+    dlg.addEventListener('cancel',()=>{if(currentDownload){currentDownload.abort();currentDownload=null}});
+    view.addEventListener('click',e=>{if(e.target.closest('[data-close]'))closeAll()});
+
+    const setBusy=(busy,label)=>{
+      submit.disabled=busy;bar.dataset.state=busy?'loading':'idle';
+      submitText.innerHTML=busy?`<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="vh">${esc(label||'جارٍ الجلب')}</span>`:'تنزيل';
     };
-    const formatLabel=f=>{
-      const kind=f.kind==='audio'?'صوت':(f.kind==='progressive'?'فيديو مع صوت':'فيديو');
-      const quality=f.qualityLabel||f.quality||'';
-      const mime=(f.mimeType||'').split(';')[0].split('/')[1]||'';
-      const bitrate=f.bitrate?Math.round(Number(f.bitrate)/1000)+'k':'';
-      return [kind,quality,mime,bitrate].filter(Boolean).join(' · ');
+
+    const formatRow=f=>{
+      const audio=f.kind==='audio',mute=f.kind==='video';
+      const type=(f.mimeType||'').split('/')[1]||'';
+      const hasQ=f.quality&&f.quality!=='—'&&f.quality!=='صوت';
+      const level={low:'منخفضة',medium:'متوسطة',high:'عالية',tiny:'منخفضة جدًا'};
+      const q=level[String(f.quality).toLowerCase()]||f.quality;
+      const label=audio?'صوت'+(hasQ?' '+q:''):(hasQ?q:'فيديو');
+      return `<li><button class="row" type="button" data-href="${esc(f.download_url)}" data-name="${esc(f.__name)}">${ic(audio?'music':mute?'mute':'play')}
+        <span class="grow"><b>${esc(label)}</b><small>${type?`<span dir="ltr">${esc(type)}</span>`:''}${f.size?`<span>${bytes(f.size)}</span>`:''}${f.bitrate?`<span dir="ltr">${Math.round(f.bitrate/1000)}k</span>`:''}</small></span>${ic('download')}</button></li>`;
     };
-    const openFormats=({normalized,formats,provider})=>{
-      modalSubtitle.textContent=normalized;
-      formatsBox.innerHTML='';
-      formats.forEach((f,index)=>{
-        const card=document.createElement('button');card.type='button';card.className='format-card';
-        const title=f.qualityLabel||f.quality||((f.kind==='audio')?'صوت':'فيديو');
-        card.innerHTML='<span class="format-icon" aria-hidden="true">'+iconFor(f)+'</span><span class="format-info"><span class="format-name">'+escapeHtml(title)+'</span><span class="format-meta">'+escapeHtml(formatLabel(f))+' · '+escapeHtml(provider||'yy')+'</span></span><span class="format-arrow" aria-hidden="true">←</span>';
-        card.addEventListener('click',()=>{closeFormats();streamDownload(f.download_url||('https://api.vidsnap.app/proxy?u='+encodeURIComponent(f.url)))});
-        formatsBox.append(card);
-      });
-      backdrop.hidden=false;closeModal.focus();
+    const showFormats=data=>{
+      const named=data.formats.map(f=>({...f,__name:data.title}));
+      const by=k=>named.filter(f=>f.kind===k);
+      const group=(title,items)=>items.length?`<h3 class="group">${title}</h3><ul class="list">${items.map(formatRow).join('')}</ul>`:'';
+      const mute=by('video');
+      open(head('youtube',data.title||'اختر الجودة','اضغط على الصيغة لبدء التنزيل')+
+        `<div class="photo"><img src="${esc(data.thumbnail||'')}" alt="" onerror="this.style.display='none'">${data.duration?`<span>المدة ${clock(data.duration)}</span>`:''}</div>`+
+        group('فيديو مع صوت',by('progressive'))+group('صوت فقط',by('audio'))+
+        (mute.length?`<details><summary>فيديو بدون صوت (${ar(mute.length)})</summary><ul class="list">${mute.map(formatRow).join('')}</ul></details>`:''));
+      view.querySelectorAll('.row').forEach(b=>b.addEventListener('click',()=>startDownload(b.dataset.href,b.dataset.name)));
+      const firstRow=view.querySelector('.row');if(firstRow)firstRow.focus({preventScroll:true});
     };
-    const closeFormats=()=>{backdrop.hidden=true};
-    closeModal.addEventListener('click',closeFormats);
-    backdrop.addEventListener('click',event=>{if(event.target===backdrop)closeFormats()});
-    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeFormats()});
-    const showLink=href=>{
-      bar.replaceChildren();
-      const button=document.createElement('button');button.className='download';button.type='button';button.textContent='تنزيل';
-      button.addEventListener('click',()=>streamDownload(href));bar.append(button);
+    const showResult=data=>{
+      open(head('file',data.title||'الملف جاهز',esc(data.site||''))+
+        `<p class="stats">${data.size?`<span>الحجم ${bytes(data.size)}</span>`:''}${data.duration?`<span>المدة ${clock(data.duration)}</span>`:''}${data.ext?`<span dir="ltr">${esc(data.ext)}</span>`:''}</p>`+
+        `<div class="actions"><button class="btn primary" type="button" id="go-download" data-autofocus>${ic('download')}تنزيل الملف</button><button class="btn" type="button" data-close>إلغاء</button></div>`);
+      $('#go-download').addEventListener('click',()=>startDownload(data.download,data.title||'download'));
     };
-    const streamDownload=async href=>{
-      bar.replaceChildren();
-      const progress=document.createElement('div');progress.className='progress';progress.dataset.indeterminate='true';
-      const fill=document.createElement('div');fill.className='progress-fill';
-      const text=document.createElement('div');text.className='progress-text';text.textContent='بدء…';
-      progress.append(fill,text);bar.append(progress);
+    const showError=(err,retry)=>{
+      const providers=err.details&&Array.isArray(err.details.providers)?err.details.providers:null;
+      const outage=providers?`<ul class="diag" aria-label="حالة المزودين">${providers.map(p=>`<li><span dir="ltr">${esc(p.provider)}</span><span>${esc(reasonText(p.reason))}</span></li>`).join('')}</ul>`:'';
+      open(head('warn','تعذر إكمال العملية')+
+        `<p class="notice" role="alert">${esc(err.message)}</p>${outage}`+
+        `<div class="actions">${err.retryable&&retry?`<button class="btn primary" type="button" id="retry" data-autofocus>${ic('retry')}أعد المحاولة</button>`:''}<button class="btn" type="button" data-close>إغلاق</button></div>`+
+        `<p class="meta">${esc(err.code)}${err.status?' / HTTP '+err.status:''}${err.requestId?' / '+esc(err.requestId):''}</p>`,'error');
+      const r=$('#retry');r&&r.addEventListener('click',retry);
+    };
+    const showProgress=name=>{
+      open(head('download','جارٍ التنزيل',esc(name))+
+        `<div class="track" data-indeterminate="true" id="track"><div class="fill" id="fill"></div></div><div class="progress-text"><span id="ptext">بدء الاتصال…</span><span id="ppct"></span></div>`+
+        `<div class="actions"><button class="btn" type="button" data-close>إلغاء التنزيل</button></div>`);
+    };
+    const showDone=(name,note)=>open(head('check','اكتمل التنزيل',esc(note||name))+`<div class="actions"><button class="btn primary" type="button" data-close data-autofocus>تم</button></div>`,'ok');
+
+    /* ---------- download with progress ---------- */
+    const nameFrom=(cd,fallback)=>{
+      if(!cd)return fallback;
+      const star=cd.match(/filename\*=UTF-8''([^;]+)/i);
+      if(star){try{return decodeURIComponent(star[1])}catch{}}
+      const plain=cd.match(/filename="?([^";]+)"?/i);return plain?plain[1]:fallback;
+    };
+    const saveBlob=(blob,name)=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),15000)};
+    async function startDownload(href,title){
+      lastAction=()=>startDownload(href,title);
+      const ctl=new AbortController();currentDownload=ctl;showProgress(title);
       try{
-        const response=await fetch(href,{mode:'cors'});
-        if(!response.ok||!response.body)throw new Error('download');
-        const total=Number(response.headers.get('content-length'))||0;const reader=response.body.getReader();const chunks=[];let received=0;
-        if(total)progress.dataset.indeterminate='false';
-        for(;;){const part=await reader.read();if(part.done)break;chunks.push(part.value);received+=part.value.length;if(total){const percent=Math.min(100,Math.round(received*100/total));fill.style.width=percent+'%';text.textContent=percent+'%'}}
-        fill.style.width='100%';text.textContent='100%';
-        const blob=new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='download';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),10000);text.textContent='تم التنزيل';
-      }catch{bar.dataset.state='error';const retry=document.createElement('button');retry.className='download';retry.type='button';retry.textContent='إعادة المحاولة';retry.onclick=()=>streamDownload(href);bar.replaceChildren(retry)}
-    };
-    const fetchWithTimeout=async(url,options={},ms=25000)=>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),ms);try{return await fetch(url,{...options,signal:controller.signal})}finally{clearTimeout(timer)}};
-    const loadYoutubeFormats=async normalized=>{
-      const response=await fetchWithTimeout('/api/v1/youtube/formats?url='+encodeURIComponent(normalized),{headers:{Accept:'application/json'}},25000);
-      const data=await response.json().catch(()=>({}));const formats=Array.isArray(data.formats)?data.formats.filter(f=>f&&f.url):[];
-      if(!response.ok||!data.ok||!formats.length)throw new Error(data.error?.message||'تعذر جلب الصيغ');
-      parsedYoutube={url:normalized,formats};openFormats({normalized,formats,provider:data.provider});
-    };
-    input.addEventListener('input',()=>{if(parsedYoutube.url&&input.value.trim()!==parsedYoutube.url)resetFormats()});
-    bar.addEventListener('submit',async event=>{
-      event.preventDefault();const value=input.value.trim();if(!value){input.focus();return}
-      setState('loading','جلب…');
+        let response;
+        try{response=await fetch(href,{signal:ctl.signal})}catch(err){if(err.name==='AbortError')return;throw networkFail(err)}
+        if(!response.ok){const data=await response.json().catch(()=>null);throw failFrom(response,data)}
+        const total=Number(response.headers.get('content-length'))||0;
+        const name=nameFrom(response.headers.get('content-disposition'),title+'.mp4');
+        if(total>MAX_BLOB||!response.body){ctl.abort();currentDownload=null;
+          const a=document.createElement('a');a.href=href;a.download=name;document.body.append(a);a.click();a.remove();
+          showDone(name,'بدأ المتصفح التنزيل لأن الملف كبير');return}
+        const track=$('#track'),fill=$('#fill'),ptext=$('#ptext'),ppct=$('#ppct');
+        if(total)track.dataset.indeterminate='false';
+        const reader=response.body.getReader(),chunks=[];let got=0;
+        for(;;){
+          const part=await reader.read();if(part.done)break;
+          chunks.push(part.value);got+=part.value.length;
+          ptext.textContent=bytes(got)+(total?' من '+bytes(total):'');
+          if(total){const p=Math.min(100,Math.round(got*100/total));fill.style.width=p+'%';ppct.textContent=ar(p)+'٪'}
+        }
+        saveBlob(new Blob(chunks,{type:response.headers.get('content-type')||'application/octet-stream'}),name);
+        currentDownload=null;showDone(name);
+      }catch(err){
+        currentDownload=null;
+        if(err&&err.name==='AbortError')return;
+        showError(err instanceof Fail?err:networkFail(err),()=>lastAction&&lastAction());
+      }
+    }
+
+    /* ---------- submit flow ---------- */
+    async function run(){
+      const value=findUrl(input.value);if(!value){input.focus();return}
+      lastAction=run;setBusy(true);
       try{
-        if(isYoutube(value)){const normalized=normalizeYoutube(value);input.value=normalized;if(parsedYoutube.url!==normalized||!parsedYoutube.formats.length)await loadYoutubeFormats(normalized);else openFormats({normalized,formats:parsedYoutube.formats,provider:'yy'});setState('idle','تنزيل');return}
-        const response=await fetchWithTimeout('/api/v1/resolve?url='+encodeURIComponent(value),{headers:{Accept:'application/json'}},25000);const data=await response.json().catch(()=>({}));if(!response.ok||!data.ok)throw new Error(data.error?.message||'تعذر جلب الملف');showLink(data.download);
-      }catch(error){bar.dataset.state='error';submit.disabled=false;submit.textContent=error.name==='AbortError'?'انتهت المهلة':'إعادة';setTimeout(()=>{if(!backdrop.hidden)return;setState('idle','تنزيل')},2400)}
+        const data=isYoutube(value)
+          ?await getJsonRetry('/api/v1/youtube/formats?url='+encodeURIComponent(value))
+          :await getJsonRetry('/api/v1/resolve?url='+encodeURIComponent(value));
+        setBusy(false);
+        isYoutube(value)?showFormats(data):showResult(data);
+      }catch(err){
+        setBusy(false);bar.dataset.state='error';
+        showError(err instanceof Fail?err:networkFail(err),run);
+      }
+    }
+    bar.addEventListener('submit',e=>{e.preventDefault();run()});
+    input.addEventListener('input',()=>{if(bar.dataset.state==='error')bar.dataset.state='idle'});
+    dlg.addEventListener('close',()=>{if(bar.dataset.state!=='error')bar.dataset.state='idle'});
+    pasteBtn.addEventListener('click',async()=>{
+      try{const text=await navigator.clipboard.readText();if(text){input.value=text.trim();input.focus()}}catch{input.focus()}
     });
+
+    const preset=new URLSearchParams(location.search).get('url');
+    if(preset){input.value=preset;run()}
+    else if(matchMedia('(pointer:fine)').matches){setTimeout(()=>input.focus({preventScroll:true}),1200)}
+  })();
   </script>
 </body>
 </html>
