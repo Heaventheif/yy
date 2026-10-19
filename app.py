@@ -121,6 +121,7 @@ def _public(url: str, media: dict, base_url: str | None = None) -> dict:
         "size": media["size"],
         "duration": media["duration"],
         "site": media["site"],
+        "direct_url": media["url"],
         "download": f"{base_url}/api/v1/download?url={quote(url, safe='')}",
         "expires_in": CACHE_TTL_PUBLIC,
     }
@@ -275,7 +276,7 @@ def health():
             "resolve_per_minute": RATE_LIMIT,
             "download_starts_per_minute": DL_RATE_LIMIT,
             "batch_max": BATCH_MAX,
-            "extract_timeout_sec": int(os.getenv("EXTRACT_TIMEOUT_SEC", "28")),
+            "extract_timeout_sec": min(10, max(1, _int_env("EXTRACT_TIMEOUT_SEC", 10))),
         },
     })
 

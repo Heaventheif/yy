@@ -32,13 +32,13 @@ class ApiTests(unittest.TestCase):
     @patch("app._rate_check")
     @patch("app.resolve_media", return_value=MEDIA)
     @patch("app.clean_url", return_value="https://www.facebook.com/watch/?v=1")
-    def test_resolve_returns_service_download_route_not_raw_cdn(self, _clean, _resolve, _rate):
+    def test_resolve_returns_direct_url_and_legacy_download_route(self, _clean, _resolve, _rate):
         response = self.client.get("/api/v1/resolve?url=https://www.facebook.com/watch/?v=1")
         body = response.get_json()
         self.assertEqual(response.status_code, 200)
         self.assertIn("/api/v1/download?url=", body["download"])
+        self.assertEqual(body["direct_url"], MEDIA["url"])
         self.assertNotIn("source", body)
-        self.assertNotIn("cdn.example.com", response.get_data(as_text=True))
 
     @patch("app._rate_check")
     @patch("app.resolve_media", return_value=MEDIA)

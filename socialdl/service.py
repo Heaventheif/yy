@@ -18,8 +18,8 @@ def _int_env(name: str, default: int, minimum: int = 1) -> int:
 
 
 CACHE_TTL = min(300, _int_env("CACHE_TTL_SEC", 75))
-EXTRACT_TIMEOUT = min(240, _int_env("EXTRACT_TIMEOUT_SEC", 28))
-MAX_PENDING = min(32, _int_env("MAX_PENDING_EXTRACTIONS", 8))
+EXTRACT_TIMEOUT = min(10, _int_env("EXTRACT_TIMEOUT_SEC", 10))
+MAX_PENDING = min(8, _int_env("MAX_PENDING_EXTRACTIONS", 4))
 CACHE_MAX = 200
 _NEGATIVE_TTL = 8
 
@@ -59,7 +59,7 @@ def resolve_media(url: str, fresh: bool = False) -> dict:
 
     if not owner:
         try:
-            return running.result(timeout=EXTRACT_TIMEOUT + 4)
+            return running.result(timeout=EXTRACT_TIMEOUT + 1)
         except FutureTimeout:
             raise ApiError("timeout", "انتهت مهلة انتظار نتيجة الاستخراج.", 504, retry_after=5)
 

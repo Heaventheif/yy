@@ -77,9 +77,10 @@ def _canonical_share_target(url: str) -> str | None:
     return target
 
 
-def expand_url(url: str, max_hops: int = 6) -> str:
+def expand_url(url: str, max_hops: int = 4) -> str:
     """Expand common share/short links, validating every redirect target."""
     current = url
+    visited = {url}
     session = requests.Session()
     session.trust_env = False
     try:
@@ -101,7 +102,7 @@ def expand_url(url: str, max_hops: int = 6) -> str:
                 response = session.get(
                     current,
                     headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
-                    stream=True, allow_redirects=False, timeout=(5, 8),
+                    stream=True, allow_redirects=False, timeout=(2, 4),
                 )
             except requests.RequestException:
                 return current
@@ -127,6 +128,9 @@ def expand_url(url: str, max_hops: int = 6) -> str:
                 raise ApiError("forbidden_url", "رفضت الخدمة وجهة تحويل غير عامة أو غير آمنة.", 403)
             if candidate == current:
                 return current
+            if candidate in visited:
+                raise ApiError("redirect_loop", "اكتُشفت حلقة تحويل في رابط المشاركة.", 422)
+            visited.add(candidate)
             current = candidate
         return current
     finally:
@@ -144,9 +148,9 @@ def _options() -> dict:
         "format": "b[protocol=https]/b[protocol=http]/ba[protocol=https]/ba[protocol=http]",
         "cachedir": False,
         "ignoreconfig": True,
-        "socket_timeout": 12,
-        "retries": 1,
-        "extractor_retries": 1,
+        "socket_timeout": 6,
+        "retries": 0,
+        "extractor_retries": 0,
         "color": "never",
     }
 

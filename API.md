@@ -1,6 +1,6 @@
 # API الخدمة
 
-الخدمة عامة بلا مفاتيح. عوّض `https://YOUR-APP.vercel.app` بعنوان مشروعك. واجهة API الحالية `v1`. جميع الردود JSON بترميز UTF-8 عدا مسار التنزيل. **لا يعيد `resolve` الرابط الأصلي الموقّع أو ترويسات CDN**؛ استخدم `download` ليبقى تمرير الملف وترويساته داخل الخدمة.
+الخدمة عامة بلا مفاتيح. عوّض `https://YOUR-APP.vercel.app` بعنوان مشروعك. واجهة API الحالية `v1`. جميع الردود JSON بترميز UTF-8 عدا مسار التنزيل. **يعيد `resolve` الحقل `direct_url` كرابط CDN مباشر قصير العمر، وقد يعيد أيضًا `download` كمسار تمرير متوافق مع الإصدارات السابقة.**
 
 تقبل واجهة API رابطًا عامًا واحدًا من النطاقات المسجلة فقط. YouTube غير مدعوم داخل API الخاصة بـ`yy`؛ الواجهة تطبع رابط YouTube إلى صيغة `www.youtube.com/watch?v=...`، ثم تطلب الصيغ أولًا من Toshiro عبر `https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl?url=...`. إذا فشل Toshiro، تستخدم VidSnap كخيار احتياطي عبر `https://api.vidsnap.app/parse?id=VIDEO_ID` أو رابط YouTube القياسي.
 
@@ -10,7 +10,7 @@
 
 | الطريقة | المسار | الوصف |
 |---|---|---|
-| GET | `/api/v1/resolve?url=` | استخراج العنوان والبيانات ورابط خدمة التنزيل |
+| GET | `/api/v1/resolve?url=` | استخراج العنوان والبيانات والرابط المباشر `direct_url` |
 | POST | `/api/v1/batch` | استخراج عدة روابط دفعة واحدة؛ `?stream=1` يعيد NDJSON |
 | GET / HEAD | `/api/v1/download?url=` | تمرير الملف مع `Range` واسم مناسب |
 | GET | `/api/v1/health` | حالة الخدمة وقائمة المواقع المعرفة |
@@ -33,12 +33,13 @@ curl --get 'https://YOUR-APP.vercel.app/api/v1/resolve' \
   "size": 12345678,
   "duration": 212,
   "site": "Facebook",
+  "direct_url": "https://cdn.example/temporary-signed-url",
   "download": "https://YOUR-APP.vercel.app/api/v1/download?url=…",
   "expires_in": 75
 }
 ```
 
-`expires_in` هو الحد الأقصى لعمر نتيجة الكاش بالثواني، وليس وعدًا بعمر رابط CDN؛ استخدم رابط التنزيل فورًا. `fresh=1` يتجاوز نتيجة الكاش لهذا الطلب.
+`direct_url` رابط مؤقت صادر من المنصة وقد ينتهي قبل `expires_in`؛ استخدمه فورًا. `expires_in` هو عمر نتيجة الكاش بالثواني وليس ضمانًا لصلاحية رابط CDN. الحقل `download` باقٍ للتوافق ويستمر في تمرير الملف عبر الخادم. `fresh=1` يتجاوز نتيجة الكاش لهذا الطلب.
 
 ### تنزيل الملف
 
@@ -105,7 +106,7 @@ curl -N -X POST 'https://YOUR-APP.vercel.app/api/v1/batch?stream=1' \
 | `RATE_LIMIT_PER_MIN` | 60 | حد resolve/batch لكل IP؛ 0 لتعطيله |
 | `DL_RATE_LIMIT_PER_MIN` | 20 | حد بدايات التنزيل لكل IP؛ 0 لتعطيله |
 | `BATCH_MAX` | 8 | حد الدفعة (10 كحد أقصى) |
-| `EXTRACT_TIMEOUT_SEC` | 28 | مهلة استخراج yt-dlp، أدنى من مهلة Vercel |
+| `EXTRACT_TIMEOUT_SEC` | 10 | مهلة انتظار نتيجة الاستخراج (حد أقصى 10 ثوانٍ؛ لا تقتل الخيط العامل تلقائيًا) |
 | `MAX_PENDING_EXTRACTIONS` | 8 | سقف الاستخراجات لكل نسخة |
 | `CACHE_TTL_SEC` | 75 | عمر نتيجة الكاش |
 | `CORS_ORIGIN` | `*` | أصل CORS؛ الأفضل ضبط أصل موقعك |
