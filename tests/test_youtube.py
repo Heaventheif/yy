@@ -180,6 +180,92 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.get_json()["error"]["retryable"])
 
+class HeightFilterTests(unittest.TestCase):
+    def test_cap_excludes_1080p_and_keeps_audio(self):
+        formats = [fmt(quality="2160p"), fmt(quality="1080p"), fmt(quality="720p"), fmt(quality="480p"),
+                   fmt(key="a", kind="audio", quality="medium", mime="audio/mp4")]
+        qs = {f["quality"] for f in yt.filter_by_height(formats, cap=720)}
+        self.assertEqual(qs, {"720p", "480p", "medium"})
+
+    def test_k_labels_and_unknown(self):
+        self.assertEqual(yt._height("4K"), 2160)
+        self.assertEqual(yt._height("8K"), 4320)
+        self.assertEqual(yt._height("720p60"), 720)
+        self.assertEqual(yt._height("جودة عالية"), 0)
+
+    def test_unknown_height_dropped_strict_kept_relaxed(self):
+        formats = [fmt(quality="جودة عالية")]
+        self.assertEqual(yt.filter_by_height(formats, cap=720), [])
+        self.assertEqual(len(yt.filter_by_height(formats, cap=720, relaxed=True)), 1)
+
+    def test_cap_zero_disables_filtering(self):
+        self.assertEqual(len(yt.filter_by_height([fmt(quality="1080p"), fmt(quality="720p")], cap=0)), 2)
+
+    def test_merge_falls_back_to_unlabeled_progressive_not_silent_video(self):
+        silent = fmt("vidsnap", "silent", kind="video", quality="720p")
+        toshiro = fmt("toshiro", "hi", kind="progressive", quality="جودة عالية")
+        out = yt._merge([(0, "toshiro", {}, [toshiro]), (1, "vidsnap", {}, [silent])])
+        self.assertTrue(any(f["kind"] == "progressive" for f in out))
+
+    def test_merge_caps_before_max_formats(self):
+        many = [fmt(key=str(i), kind="video", quality=f"{1080 + i}p") for i in range(20)]
+        keep = fmt("vidsnap", "ok", quality="480p")
+        out = yt._merge([(0, "vidsnap", {}, many + [keep])])
+        self.assertEqual([f["quality"] for f in out], ["480p"])
+
+
+class TrimTests(unittest.TestCase):
+    def setUp(self):
+        application.app.config["TESTING"] = True
+        self.client = application.app.test_client()
+
+    def audio_token(self, mime="audio/mp4"):
+        return yt.make_token("dQw4w9WgXcQ", "T", fmt(kind="audio", mime=mime, quality="medium"))
+
+    @patch("app._rate_check")
+    def test_rejects_non_audio_token(self, _rate):
+        tok = yt.make_token("dQw4w9WgXcQ", "T", fmt(kind="progressive"))
+        r = self.client.get(f"/api/v1/youtube/trim?t={tok}&start=10&end=20")
+        self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (400, "not_audio"))
+
+    @patch("app._rate_check")
+    def test_rejects_bad_times(self, _rate):
+        tok = self.audio_token()
+        for query, code in (("start=100&end=50", "invalid_request"), ("start=nan&end=5", "invalid_time"),
+                            ("start=-3", "invalid_time"), ("", "invalid_request")):
+            r = self.client.get(f"/api/v1/youtube/trim?t={tok}&{query}")
+            self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (400, code), query)
+
+    @patch("app._rate_check")
+    def test_head_does_no_work(self, _rate):
+        r = self.client.head(f"/api/v1/youtube/trim?t={self.audio_token()}&start=1&end=2")
+        self.assertEqual(r.status_code, 200)
+
+    @patch("app._rate_check")
+    def test_real_trim_with_ffmpeg(self, _rate):
+        import subprocess, tempfile, os
+        ffmpeg = application._ffmpeg_exe()
+        if not ffmpeg:
+            self.skipTest("ffmpeg unavailable")
+        src = os.path.join(tempfile.mkdtemp(), "tone.m4a")
+        subprocess.run([ffmpeg, "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=10", "-c:a", "aac", src], check=True)
+        body = open(src, "rb").read()
+
+        class Up(FakeUpstream):
+            def iter_content(self, _size):
+                yield body
+
+        for extra in ("", "&reencode=1"):
+            with patch("app._open_upstream", return_value=(Up(ctype="audio/mp4"), FakeSession())):
+                r = self.client.get(f"/api/v1/youtube/trim?t={self.audio_token()}&start=2&end=5{extra}")
+                data = r.get_data()
+            self.assertEqual(r.status_code, 200)
+            out = os.path.join(tempfile.mkdtemp(), "o.m4a")
+            open(out, "wb").write(data)
+            probe = subprocess.run([ffmpeg, "-i", out, "-f", "null", "-"], capture_output=True, text=True).stderr
+            self.assertRegex(probe, r"time=00:00:0[2-3]\.")
+        self.assertEqual([f for f in os.listdir("/tmp") if f.startswith("yt_")], [])
+
 
 if __name__ == "__main__":
     unittest.main()

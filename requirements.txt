@@ -1,3 +1,4 @@
 flask>=3.0,<4
 requests>=2.32,<3
 yt-dlp[default]>=2026.8.19,<2027
+imageio-ffmpeg>=0.5.1,<1

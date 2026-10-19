@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -287,7 +290,7 @@ def api_resolve():
 
 @app.get("/api/v1/youtube/formats")
 def api_youtube_formats():
-    """List downloadable YouTube formats. Every download link points back at this service."""
+    """List downloadable YouTube formats (video <= MAX_VIDEO_HEIGHT, audio always). Links point back at this service."""
     _rate_check("resolve", RATE_LIMIT)
     video_id = yt.extract_video_id(request.args.get("url"))
     found = yt.lookup(video_id, fresh=request.args.get("fresh") == "1")
@@ -301,6 +304,7 @@ def api_youtube_formats():
         "bitrate": fmt["bitrate"],
         "size": fmt["size"],
         "provider": fmt["provider"],
+        "height": yt._height(fmt["quality"]) or None,
         "download_url": f"{base_url}/api/v1/youtube/download?t={yt.make_token(video_id, found['title'], fmt)}",
     } for fmt in found["formats"]]
     return _json({
@@ -313,6 +317,7 @@ def api_youtube_formats():
         "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
         "duration": found["duration"],
         "formats": formats,
+        "max_height": yt.MAX_VIDEO_HEIGHT,
         "cache": found["cache"],
         "expires_in": yt.TOKEN_TTL,
     })
@@ -358,6 +363,136 @@ def api_youtube_download():
                            502, retry_after=5, upstream_status=second.upstream_status or first.upstream_status,
                            details={"first": first.code, "second": second.code}) from None
     return _upstream_response(upstream, session, media)
+
+
+def _ffmpeg_exe() -> str | None:
+    """Locate ffmpeg: the static binary bundled by imageio-ffmpeg, else one on PATH."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        return shutil.which("ffmpeg")
+
+
+def _parse_time_param(name: str) -> float | None:
+    """Parse '30', '0:30', '1:02:03' into seconds; reject NaN/Inf/negative."""
+    raw = request.args.get(name)
+    if raw in (None, ""):
+        return None
+    parts = str(raw).strip().split(":")
+    try:
+        if len(parts) == 3:
+            value = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:
+            value = int(parts[0]) * 60 + float(parts[1])
+        else:
+            value = float(parts[0])
+    except ValueError:
+        raise ApiError("invalid_time", f"قيمة {name} غير صالحة؛ استخدم ثانية أو m:ss أو h:mm:ss.", 400) from None
+    if not math.isfinite(value) or value < 0:
+        raise ApiError("invalid_time", f"قيمة {name} يجب أن تكون رقمًا موجبًا.", 400)
+    return value
+
+
+@app.route("/api/v1/youtube/trim", methods=["GET", "HEAD"])
+def api_youtube_trim():
+    """Fetch an audio format, trim it with ffmpeg and stream the result.
+
+    Query: t=<audio token>  start=<sec>  end=<sec>  reencode=0|1. Only 'audio' tokens are accepted.
+    """
+    token = yt.read_token(request.args.get("t"))
+    if token.get("k") != "audio":
+        raise ApiError("not_audio", "هذا الرابط ليس لصيغة صوتية.", 400)
+
+    start = _parse_time_param("start")
+    end = _parse_time_param("end")
+    if start is None and end is None:
+        raise ApiError("invalid_request", "حدد start و/أو end للاقتصاص.", 400)
+    s = start or 0.0
+    if end is not None and end <= s:
+        raise ApiError("invalid_request", "end يجب أن يكون أكبر من start.", 400)
+    reencode = request.args.get("reencode") == "1"
+
+    if not request.headers.get("Range"):
+        _rate_check("download", DL_RATE_LIMIT)
+    if request.method == "HEAD":
+        return Response(b"", status=200, headers={"Cache-Control": "no-store"})
+
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        raise ApiError("ffmpeg_missing", "أداة ffmpeg غير متوفرة على الخادم.", 500)
+
+    ext = "m4a" if "mp4" in (token.get("m") or "").lower() else "webm"
+    rid = uuid.uuid4().hex                      # never reuse the client-supplied request id for paths
+    src = f"/tmp/yt_src_{rid}.bin"
+    out = f"/tmp/yt_out_{rid}.{ext}"
+
+    def _cleanup() -> None:
+        for path in (src, out):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    try:
+        media = {"url": token["u"], "headers": {"User-Agent": yt.UA}}
+        upstream, session = _open_upstream(media, None, "GET", timeout=(10, 60))
+        try:
+            if upstream.status_code not in (200, 206):
+                raise from_upstream_status(upstream.status_code)
+            with open(src, "wb") as fh:
+                for chunk in upstream.iter_content(CHUNK_SIZE):
+                    if chunk:
+                        fh.write(chunk)
+        finally:
+            upstream.close()
+            session.close()
+
+        args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+        if s > 0:
+            args += ["-ss", f"{s:.3f}"]
+        args += ["-i", src]
+        if end is not None:
+            args += ["-t", f"{end - s:.3f}"]
+        if reencode:                            # webm cannot hold AAC
+            args += ["-c:a", "aac", "-b:a", "192k"] if ext == "m4a" else ["-c:a", "libopus", "-b:a", "128k"]
+        else:
+            args += ["-c", "copy"]
+        args += [out]
+        try:
+            subprocess.run(args, check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except subprocess.TimeoutExpired:
+            raise ApiError("ffmpeg_timeout", "تجاوز الاقتصاص المهلة القصوى.", 504, retry_after=5) from None
+        except subprocess.CalledProcessError as exc:
+            snippet = (exc.stderr or b"").decode("utf-8", "replace")[:200]
+            raise ApiError("ffmpeg_failed", f"فشل الاقتصاص: {snippet}", 500) from None
+
+        tag = f"{s:g}s-{end:g}s" if end is not None else f"from {s:g}s"
+        media_info = {"title": f"{token.get('t') or 'audio'} [{tag}]", "ext": ext}
+        try:
+            os.remove(src)                      # the output stays until the generator has streamed it
+        except OSError:
+            pass
+
+        def _iter():
+            try:
+                with open(out, "rb") as fh:
+                    while True:
+                        chunk = fh.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                _cleanup()
+
+        return Response(_iter(), mimetype="audio/mp4" if ext == "m4a" else "audio/webm", headers={
+            "Content-Disposition": _filename(media_info),
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        })
+    except BaseException:
+        _cleanup()
+        raise
 
 
 @app.get("/")

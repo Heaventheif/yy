@@ -76,9 +76,49 @@ def extract_video_id(raw: str | None) -> str:
 
 # --------------------------------------------------------------------- normalizing
 
+def _parse_max_height() -> int:
+    """MAX_VIDEO_HEIGHT: 0 disables filtering; positive = height cap; invalid/negative -> 720."""
+    try:
+        value = int(os.getenv("MAX_VIDEO_HEIGHT", "720"))
+    except (TypeError, ValueError):
+        return 720
+    return value if value >= 0 else 720
+
+
+MAX_VIDEO_HEIGHT = _parse_max_height()
+
+
 def _height(label: str) -> int:
-    match = re.search(r"(\d{3,4})p", label or "")
-    return int(match.group(1)) if match else 0
+    """Numeric height from '720p', '720p60', '4K'/'8K'; labels like 'جودة عالية' -> 0."""
+    text = label or ""
+    match = re.search(r"(\d{3,4})p", text)
+    if match:
+        return int(match.group(1))
+    match = re.match(r"^\s*([48])K\b", text, re.IGNORECASE)
+    return int(match.group(1)) * 540 if match else 0
+
+
+def filter_by_height(formats: list[dict], cap: int | None = None, relaxed: bool = False) -> list[dict]:
+    """Keep audio always; keep video only when its height is known and <= cap.
+
+    cap <= 0 disables filtering. relaxed=True also keeps unknown-height labels.
+    """
+    if cap is None:
+        cap = MAX_VIDEO_HEIGHT
+    if cap <= 0:
+        return list(formats)
+    kept = []
+    for fmt in formats:
+        if fmt.get("kind") == "audio":
+            kept.append(fmt)
+            continue
+        height = _height(fmt.get("quality"))
+        if height == 0:
+            if relaxed:
+                kept.append(fmt)
+        elif height <= cap:
+            kept.append(fmt)
+    return kept
 
 
 def _to_int(value) -> int | None:
@@ -295,15 +335,24 @@ def _active(chain: list[str]) -> list[str]:
 
 
 def _merge(successes) -> list[dict]:
-    """Combine formats from every provider that answered; same kind+quality+type keeps the higher-priority one."""
+    """Combine formats from every provider that answered; same kind+quality+type keeps the higher-priority one.
+
+    The height cap is applied here, before MAX_FORMATS, so 1080p/4K never use up the slots.
+    """
     seen, out = set(), []
     for _, _, _, formats in sorted(successes, key=lambda item: item[0]):
-        for fmt in _sort_formats(formats):
+        for fmt in formats:
             key = (fmt["kind"], fmt["quality"], fmt["mime"])
             if key in seen:
                 continue
             seen.add(key)
             out.append(fmt)
+    strict = filter_by_height(out, relaxed=False)
+    if any(f["kind"] == "progressive" for f in strict):
+        out = strict
+    else:                                   # no known-height progressive: accept unlabeled ones (toshiro)
+        relaxed = filter_by_height(out, relaxed=True)
+        out = relaxed if any(f["kind"] == "progressive" for f in relaxed) else strict
     return _sort_formats(out)
 
 

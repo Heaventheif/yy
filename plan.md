@@ -31,3 +31,9 @@ Vercel Python / streaming / limits: https://vercel.com/docs/functions/runtimes/p
 ## تحقق
 
 معايير القبول: YouTube يرفض صراحة؛ مسارات API تفسر 402 و403 و443؛ الواجهة عربية RTL؛ لا يُعاد CDN URL في JSON؛ التوسعة لا تتبع وجهات داخلية؛ اختبارات الوحدات تغطي المنصات والأخطاء والدفعات وHEAD/Range؛ وثائق API والنشر تصف الحدود.
+
+## ملحق — تعديلات ما بعد البناء
+
+- **سقف جودة الفيديو**: `MAX_VIDEO_HEIGHT` (افتراضي 720، `0` يعطّل الفلترة). تُطبَّق في `youtube._merge` قبل `MAX_FORMATS`. الصوت يظهر دائمًا؛ تسميات بلا ارتفاع (مثل توشيرو) تُقبل فقط إن لم توجد صيغة progressive معروفة الارتفاع.
+- **اقتصاص الصوت**: `/api/v1/youtube/trim?t=&start=&end=&reencode=` عبر `imageio-ffmpeg`؛ يقبل توكنات الصوت فقط، وينزّل إلى `/tmp` عبر `_open_upstream` (يحفظ فحص SSRF) ثم يقصّ بـ`-c copy` (أو `aac`/`libopus` عند `reencode=1`).
+- **تحويل 307 السريع مؤجَّل**: `connect-src 'self'` في `vercel.json` يحجب تحويل `fetch` إلى `api.vidsnap.app`.
