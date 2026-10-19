@@ -35,6 +35,8 @@ TOTAL_BUDGET = 9.0                 # whole lookup budget; the page must never ha
 MAX_FORMATS = 14                   # cap the response size at the contract level
 FORMAT_CACHE_TTL = 30
 TOKEN_TTL = 600
+MIN_FORMATS = 6                    # fewer than this: also wait for the other providers
+GRACE = 2.0                        # how long to wait for them (seconds)
 COOLDOWN_AFTER = 3                 # consecutive failures before a provider is skipped
 COOLDOWN_SECONDS = 45
 
@@ -292,6 +294,19 @@ def _active(chain: list[str]) -> list[str]:
     return ready or chain                            # if all are cooling down, try anyway
 
 
+def _merge(successes) -> list[dict]:
+    """Combine formats from every provider that answered; same kind+quality+type keeps the higher-priority one."""
+    seen, out = set(), []
+    for _, _, _, formats in sorted(successes, key=lambda item: item[0]):
+        for fmt in _sort_formats(formats):
+            key = (fmt["kind"], fmt["quality"], fmt["mime"])
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(fmt)
+    return _sort_formats(out)
+
+
 def lookup(video_id: str, fresh: bool = False) -> dict:
     now = time.monotonic()
     with _lock:
@@ -304,13 +319,17 @@ def lookup(video_id: str, fresh: bool = False) -> dict:
     futures = {_pool.submit(PROVIDERS[name], video_id, normalized): name for name in names}
     deadline = time.monotonic() + TOTAL_BUDGET
     failures: list[dict] = []
+    successes: list[tuple[int, str, dict, list[dict]]] = []
     pending = set(futures)
+    grace_end = None
+    merged: list[dict] = []
     while pending:
-        remaining = deadline - time.monotonic()
+        limit = deadline if grace_end is None else min(deadline, grace_end)
+        remaining = limit - time.monotonic()
         if remaining <= 0:
             break
         done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
-        for future in sorted(done, key=lambda f: names.index(futures[f])):   # priority among simultaneous results
+        for future in done:
             name = futures[future]
             try:
                 result = future.result()
@@ -322,27 +341,37 @@ def lookup(video_id: str, fresh: bool = False) -> dict:
                 _record(name, False)
                 failures.append({"provider": name, "reason": "error"})
                 continue
-            formats = _sort_formats(result.get("formats") or [])
+            formats = result.get("formats") or []
             if not formats:
                 _record(name, False)
                 failures.append({"provider": name, "reason": "empty"})
                 continue
             _record(name, True)
-            for other in pending:
-                other.cancel()
-            value = {
-                "provider": name,
-                "video_id": video_id,
-                "normalized": normalized,
-                "title": (result.get("title") or "YouTube"),
-                "duration": result.get("duration"),
-                "formats": formats,
-            }
-            with _lock:
-                if len(_cache) > 100:
-                    _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
-                _cache[video_id] = (time.monotonic(), value)
-            return dict(value, cache="miss")
+            successes.append((names.index(name), name, result, formats))
+        if successes:
+            merged = _merge(successes)
+            if len(merged) >= MIN_FORMATS:
+                break                              # plenty of choices already
+            if grace_end is None:                  # few choices: wait briefly for the other providers
+                grace_end = time.monotonic() + GRACE
+    if successes:
+        for future in pending:
+            future.cancel()
+        successes.sort(key=lambda item: item[0])
+        merged = merged or _merge(successes)
+        value = {
+            "provider": "+".join(item[1] for item in successes),
+            "video_id": video_id,
+            "normalized": normalized,
+            "title": next((item[2].get("title") for item in successes if item[2].get("title")), "YouTube"),
+            "duration": next((item[2].get("duration") for item in successes if item[2].get("duration")), None),
+            "formats": merged,
+        }
+        with _lock:
+            if len(_cache) > 100:
+                _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
+            _cache[video_id] = (time.monotonic(), value)
+        return dict(value, cache="miss")
     for future in pending:                       # still running at the deadline: give up on them
         future.cancel()
         _record(futures[future], False)

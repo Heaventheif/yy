@@ -19,8 +19,8 @@
       --ui:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
     }
     *{box-sizing:border-box}
-    html{-webkit-text-size-adjust:100%}
-    body{margin:0;min-height:100vh;min-height:100dvh;color:var(--chalk);font-family:var(--ui);
+    html{-webkit-text-size-adjust:100%;overflow-x:clip}
+    body{margin:0;max-width:100%;overflow-x:clip;min-height:100vh;min-height:100dvh;color:var(--chalk);font-family:var(--ui);
       background:var(--wood) url(/img/wood.jpg) center/800px repeat;
       padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
     button,input{font:inherit;color:inherit}
@@ -111,7 +111,8 @@
     .group{margin:14px 0 6px;font:700 17px var(--title);color:var(--ink-soft)}
     .list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
     .row{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:2px solid var(--ink);border-radius:6px;background:rgba(255,255,255,.55);color:var(--ink);text-align:start;cursor:pointer;transition:transform .12s,background .12s}
-    .row:hover{background:#fff;transform:translateX(-3px)}
+    .row:active{background:#fff}
+    @media (hover:hover){.row:hover{background:#fff;transform:translateX(-3px)}}
     .row .ic{width:22px;height:22px}
     .row b{font-size:16px;font-weight:600}
     .row small{display:flex;flex-wrap:wrap;gap:2px 12px;margin-top:2px;color:var(--ink-soft);font-size:12.5px}
@@ -136,6 +137,7 @@
     @keyframes write{to{stroke-dashoffset:0}}
     @keyframes drop{0%{opacity:0;transform:translateY(-70px) rotate(-5deg)}100%{opacity:1;transform:rotate(-1deg)}}
     @keyframes sheet-in{0%{opacity:0;transform:translateY(-30px) rotate(-3deg)}100%{opacity:1;transform:rotate(-.5deg)}}
+    @keyframes sheet-in-flat{0%{opacity:0;transform:translateY(-24px)}100%{opacity:1;transform:none}}
     @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
     @keyframes slide{0%{transform:translateX(160%)}100%{transform:translateX(-160%)}}
 
@@ -144,7 +146,10 @@
       .card{padding:26px 14px 18px}.bar{flex-direction:column;align-items:stretch}
       .sites li{width:64px;font-size:12px}.sites .ic{width:30px;height:30px}
       .photo{flex-direction:column;align-items:stretch}.photo img{width:100%}
-      .sheet{padding:24px 14px 16px}
+      .sheet{padding:24px 14px 16px;transform:none;animation-name:sheet-in-flat!important}
+      .card,.photo{transform:none}
+      @keyframes drop-flat{0%{opacity:0;transform:translateY(-50px)}100%{opacity:1;transform:none}}
+      .card{animation-name:drop-flat}
     }
     @media (prefers-reduced-motion:reduce){
       *,*::before,*::after{animation-duration:.001ms!important;animation-delay:0s!important;animation-iteration-count:1!important;transition:none!important}

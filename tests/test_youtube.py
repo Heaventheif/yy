@@ -194,7 +194,7 @@ class SpeedTests(unittest.TestCase):
         def hung(*_):
             time.sleep(3)
             return {"title": "slow", "formats": [fmt("toshiro")]}
-        quick = lambda *_: {"title": "T", "duration": 1, "formats": [fmt("vidsnap")]}
+        quick = lambda *_: {"title": "T", "duration": 1, "formats": [fmt("vidsnap", str(i), quality=f"{200+i}p") for i in range(7)]}
         started = time.monotonic()
         with patch.dict(yt.PROVIDERS, {"toshiro": hung, "vidsnap": quick}):
             result = yt.lookup("dQw4w9WgXcQ")
@@ -211,3 +211,21 @@ class SpeedTests(unittest.TestCase):
                 yt.lookup("dQw4w9WgXcQ")
         self.assertEqual((ctx.exception.status, ctx.exception.code), (504, "youtube_timeout"))
         self.assertLess(time.monotonic() - started, 1.2)
+
+
+class MergeTests(unittest.TestCase):
+    def setUp(self):
+        yt._cache.clear()
+        yt._health.clear()
+
+    def test_formats_from_several_providers_are_combined(self):
+        a = lambda *_: {"title": "T", "formats": [fmt("toshiro", "a", quality="720p")]}
+        b = lambda *_: {"title": "T", "formats": [fmt("vidsnap", "b", quality="360p"),
+                                                  fmt("vidsnap", "c", kind="audio", quality="medium", mime="audio/mp4"),
+                                                  fmt("vidsnap", "d", quality="720p")]}
+        with patch.dict(yt.PROVIDERS, {"toshiro": a, "vidsnap": b}):
+            result = yt.lookup("dQw4w9WgXcQ")
+        qualities = [(f["kind"], f["quality"]) for f in result["formats"]]
+        self.assertEqual(len(result["formats"]), 3)            # 720p duplicate collapsed
+        self.assertIn(("audio", "medium"), qualities)
+        self.assertEqual(result["formats"][0]["provider"], "toshiro")
