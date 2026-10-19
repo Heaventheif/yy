@@ -20,7 +20,6 @@ _META_URL = re.compile(
 )
 _FB_VIDEO_ID = re.compile(r'"(?:video_id|videoId)"\s*:\s*"(\d{6,})"')
 
-
 class _QuietLogger:
     def debug(self, _message):
         pass
@@ -33,7 +32,6 @@ class _QuietLogger:
 
     def error(self, _message):
         pass
-
 
 def _page_target(body: str, base: str) -> str | None:
     for match in _META_URL.finditer(body or ""):
@@ -50,7 +48,6 @@ def _page_target(body: str, base: str) -> str | None:
             return f"https://www.facebook.com/watch/?v={match.group(1)}"
     return None
 
-
 def _needs_expand(url: str) -> bool:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower().rstrip(".")
@@ -63,7 +60,6 @@ def _needs_expand(url: str) -> bool:
         provider_for_host(host) is not None and share_path
     )
 
-
 def _canonical_share_target(url: str) -> str | None:
     """Resolve a supported share/short URL to yt-dlp's canonical media URL."""
     try:
@@ -75,7 +71,6 @@ def _canonical_share_target(url: str) -> str | None:
     if not isinstance(target, str) or target == url:
         return None
     return target
-
 
 def expand_url(url: str, max_hops: int = 4) -> str:
     """Expand common share/short links, validating every redirect target."""
@@ -136,7 +131,6 @@ def expand_url(url: str, max_hops: int = 4) -> str:
     finally:
         session.close()
 
-
 def _options() -> dict:
     return {
         "quiet": True,
@@ -154,7 +148,6 @@ def _options() -> dict:
         "color": "never",
     }
 
-
 def _safe_headers(headers: dict | None) -> dict[str, str]:
     blocked = {"cookie", "authorization", "proxy-authorization", "host", "content-length", "accept-encoding"}
     safe = {}
@@ -162,7 +155,6 @@ def _safe_headers(headers: dict | None) -> dict[str, str]:
         if key.lower() not in blocked and isinstance(value, str) and len(value) < 2048:
             safe[key] = value
     return safe
-
 
 def extract_media(url: str) -> dict:
     """Return metadata and a short-lived CDN URL; never downloads or merges media."""

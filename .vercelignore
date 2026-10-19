@@ -2,9 +2,4 @@ __pycache__/
 *.pyc
 .env
 .venv/
-tests/
-research/
 README.md
-API.md
-plan.md
-TODO.md

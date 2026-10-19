@@ -3,116 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f7f5ef">
   <meta name="description" content="ألصق رابط الفيديو واختر الجودة ثم نزّله">
   <title>نزّل</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">
-  <style>
-    :root{
-      --paper:#fff; --ink:#000; --soft:#666; --line:#dcdcdc; --wash:#f2f2f2; --err:#c4170c;
-      --ui:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
-      --r:14px;
-    }
-    @media (prefers-color-scheme:dark){
-      :root{--paper:#000; --ink:#fff; --soft:#9b9b9b; --line:#2b2b2b; --wash:#151515; --err:#ff6b5e}
-    }
-    *{box-sizing:border-box}
-    html{-webkit-text-size-adjust:100%;background:var(--paper)}
-    body{margin:0;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:stretch;
-      background:var(--paper);color:var(--ink);font-family:var(--ui);line-height:1.5;
-      padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
-    button,input{font:inherit;color:inherit}
-    .ic{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-    :focus-visible{outline:2px solid var(--ink);outline-offset:3px}
-    .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-
-    /* ---------- the bar ---------- */
-    main{width:100%;max-width:560px;margin:0 auto;padding-bottom:10vh;min-width:0}
-    .bar{display:grid;grid-template-columns:minmax(0,1fr);border:2px solid var(--ink);border-radius:var(--r);overflow:hidden;
-      transition:border-color .15s}
-    .bar[data-state="error"]{border-color:var(--err)}
-    .field{display:flex;align-items:center;gap:2px;min-width:0;height:60px;padding-inline:4px 8px}
-    .field:focus-within{box-shadow:inset 0 -3px 0 var(--ink)}
-    input{flex:1;min-width:0;height:100%;padding:0 8px;border:0;outline:0;background:transparent;
-      direction:ltr;text-align:left;font-size:16px;text-overflow:ellipsis}
-    input:placeholder-shown{direction:rtl;text-align:right}
-    input::placeholder{color:var(--soft);opacity:1}
-    input:focus-visible{outline:0}
-    .icon-btn{display:grid;place-items:center;flex:none;width:44px;height:44px;border:0;border-radius:10px;background:transparent;color:var(--soft);cursor:pointer}
-    .icon-btn:hover,.icon-btn:active{background:var(--wash);color:var(--ink)}
-    .go{display:flex;align-items:center;justify-content:center;gap:10px;height:56px;padding:0 24px;border:0;border-top:2px solid var(--ink);
-      background:var(--ink);color:var(--paper);font-weight:600;font-size:17px;cursor:pointer}
-    .go:active{opacity:.85}
-    .go:disabled{cursor:progress}
-    .dots{display:inline-flex;gap:5px}
-    .dots i{width:6px;height:6px;border-radius:50%;background:currentColor;animation:blink 1s infinite}
-    .dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
-    @media (min-width:560px){
-      .bar{grid-template-columns:minmax(0,1fr) auto}
-      .field{height:64px}
-      .go{height:auto;min-width:150px;border-top:0;border-inline-end:2px solid var(--ink)}
-    }
-
-    /* ---------- sheet (formats / progress / result / error) ---------- */
-    dialog{width:100%;max-width:560px;max-height:100dvh;margin:auto auto 0;padding:0;border:0;background:transparent;color:var(--ink);overflow:visible}
-    dialog::backdrop{background:rgba(0,0,0,.5)}
-    dialog[open] .sheet{animation:up .24s cubic-bezier(.2,.8,.2,1) both}
-    .sheet{max-height:88dvh;overflow:auto;overscroll-behavior:contain;padding:16px 16px calc(18px + env(safe-area-inset-bottom));
-      background:var(--paper);border:2px solid var(--ink);border-bottom:0;border-radius:22px 22px 0 0}
-    @media (min-width:560px){
-      dialog{margin:auto}
-      .sheet{border-bottom:2px solid var(--ink);border-radius:22px;padding-bottom:18px}
-    }
-    .head{display:flex;align-items:center;gap:12px;min-height:44px;margin-bottom:6px}
-    .head>.ic{width:26px;height:26px}
-    .head h2{flex:1;min-width:0;margin:0;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .list{display:grid;margin:0;padding:0;list-style:none}
-    .list+.list{margin-top:8px;border-top:2px solid var(--ink)}
-    .item{display:flex;align-items:center;border-bottom:1px solid var(--line)}
-    .item:last-child{border-bottom:0}
-    .row{flex:1;min-width:0;display:flex;align-items:center;gap:14px;min-height:58px;padding:8px 4px;border:0;background:transparent;text-align:start;cursor:pointer;border-radius:10px}
-    .row:active{background:var(--wash)}
-    @media (hover:hover){.row:hover{background:var(--wash)}}
-    .row .grow{flex:1;min-width:0;display:flex;align-items:baseline;flex-wrap:wrap;gap:0 14px}
-    .row b{font-size:17px;font-weight:600}
-    .row small{display:flex;flex-wrap:wrap;gap:0 12px;color:var(--soft);font-size:13px}
-    details summary{display:flex;align-items:center;gap:10px;min-height:48px;margin-top:8px;border-top:2px solid var(--ink);color:var(--soft);cursor:pointer;list-style:none}
-    details summary::-webkit-details-marker{display:none}
-    details[open] summary{color:var(--ink)}
-    details .list{margin:0;border:0}
-    .trim{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;padding:0 4px 12px}
-    .trim[hidden]{display:none}
-    .trim input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-    .trim input{height:46px;padding:0 12px;border:2px solid var(--ink);border-radius:10px;direction:ltr;text-align:center;font-size:16px}
-    .trim input:placeholder-shown{direction:ltr;text-align:center}
-    .btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:52px;padding:0 22px;border:2px solid var(--ink);border-radius:12px;background:var(--ink);color:var(--paper);font-weight:600;font-size:16px;cursor:pointer}
-    .btn:active{opacity:.85}
-    .btn.block{width:100%;margin-top:14px}
-    .btn.ghost{background:transparent;color:var(--ink)}
-    .btn.sm{min-height:46px;padding:0 16px}
-    .stats{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;color:var(--soft);font-size:14px}
-    .notice{margin:6px 0 0;font-size:15px;line-height:1.7;color:var(--err);overflow-wrap:anywhere}
-    .diag{margin:10px 0 0;padding:0;list-style:none;font-size:13px;color:var(--soft)}
-    .diag li{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px solid var(--line)}
-    .meta{margin:12px 0 0;color:var(--soft);font-size:12px;direction:ltr;text-align:start;overflow-wrap:anywhere}
-
-    /* ---------- progress ---------- */
-    .track{height:8px;margin:14px 0 10px;border-radius:4px;overflow:hidden;background:var(--line)}
-    .fill{height:100%;width:0;background:var(--ink);border-radius:4px;transition:width .15s linear}
-    .track[data-indeterminate="true"] .fill{width:36%;animation:slide 1.1s ease-in-out infinite}
-    .progress-text{display:flex;justify-content:space-between;color:var(--soft);font-size:13px;font-variant-numeric:tabular-nums}
-
-    @keyframes up{from{opacity:0;transform:translateY(40px)}to{opacity:1;transform:none}}
-    @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
-    @keyframes slide{0%{transform:translateX(160%)}100%{transform:translateX(-160%)}}
-    @media (prefers-reduced-motion:reduce){
-      *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition:none!important}
-    }
-  </style>
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -187,7 +85,7 @@
         return data;
       }finally{clearTimeout(timer)}
     };
-    /* one automatic retry for transient provider failures (502/503/504) */
+    
     const getJsonRetry=async url=>{
       const t0=Date.now();
       try{return await getJson(url)}
@@ -198,7 +96,6 @@
       }
     };
 
-    /* ---------- sheet ---------- */
     const head=(title,icon)=>`<div class="head">${icon?ic(icon):''}<h2 id="dlg-title">${esc(title)}</h2><button class="icon-btn" type="button" data-close aria-label="إغلاق">${ic('close')}</button></div>`;
     const open=(html,tone='')=>{clearTimeout(doneTimer);view.dataset.tone=tone;view.innerHTML=html;if(!dlg.open)dlg.showModal();
       const first=view.querySelector('[data-autofocus]');first&&first.focus({preventScroll:true})};
@@ -271,7 +168,6 @@
       doneTimer=setTimeout(()=>{if(dlg.open)dlg.close()},2200);
     };
 
-    /* ---------- download with progress ---------- */
     const nameFrom=(cd,fallback)=>{
       if(!cd)return fallback;
       const star=cd.match(/filename\*=UTF-8''([^;]+)/i);
@@ -309,7 +205,6 @@
       }
     }
 
-    /* ---------- submit flow ---------- */
     async function run(){
       const value=findUrl(input.value);if(!value){input.focus();return}
       lastAction=run;setBusy(true);

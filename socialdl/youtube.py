@@ -30,16 +30,15 @@ TOSHIRO_URL = "https://toshiro-api-editz6t9.vercel.app/api/downloader/alldl"
 VIDSNAP_PARSE = "https://api.vidsnap.app/parse"
 VIDSNAP_PROXY = "https://api.vidsnap.app/proxy"
 
-PROVIDER_TIMEOUT = (2.5, 6)        # connect, read (seconds) for each provider call
-TOTAL_BUDGET = 9.0                 # whole lookup budget; the page must never hang longer
-MAX_FORMATS = 14                   # cap the response size at the contract level
+PROVIDER_TIMEOUT = (2.5, 6)                                                        
+TOTAL_BUDGET = 9.0                                                                       
+MAX_FORMATS = 14                                                                
 FORMAT_CACHE_TTL = 30
 TOKEN_TTL = 600
-MIN_FORMATS = 6                    # fewer than this: also wait for the other providers
-GRACE = 2.0                        # how long to wait for them (seconds)
-COOLDOWN_AFTER = 3                 # consecutive failures before a provider is skipped
+MIN_FORMATS = 6                                                                        
+GRACE = 2.0                                                             
+COOLDOWN_AFTER = 3                                                                    
 COOLDOWN_SECONDS = 45
-
 
 def _int_env(name: str, default: int) -> int:
     try:
@@ -47,18 +46,13 @@ def _int_env(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
-
 TOKEN_TTL = _int_env("YT_TOKEN_TTL_SEC", TOKEN_TTL)
-
 
 class ProviderError(Exception):
     def __init__(self, reason: str, status: int | None = None):
         super().__init__(reason)
         self.reason = reason
         self.status = status
-
-
-# --------------------------------------------------------------------------- ids
 
 def extract_video_id(raw: str | None) -> str:
     raw = (raw or "").strip()
@@ -73,9 +67,6 @@ def extract_video_id(raw: str | None) -> str:
         raise ApiError("invalid_youtube_url", "تعذر استخراج معرّف فيديو YouTube من الرابط.", 400)
     return match.group(1)
 
-
-# --------------------------------------------------------------------- normalizing
-
 def _parse_max_height() -> int:
     """MAX_VIDEO_HEIGHT: 0 disables filtering; positive = height cap; invalid/negative -> 720."""
     try:
@@ -84,9 +75,7 @@ def _parse_max_height() -> int:
         return 720
     return value if value >= 0 else 720
 
-
 MAX_VIDEO_HEIGHT = _parse_max_height()
-
 
 def _height(label: str) -> int:
     """Numeric height from '720p', '720p60', '4K'/'8K'; labels like 'جودة عالية' -> 0."""
@@ -96,7 +85,6 @@ def _height(label: str) -> int:
         return int(match.group(1))
     match = re.match(r"^\s*([48])K\b", text, re.IGNORECASE)
     return int(match.group(1)) * 540 if match else 0
-
 
 def filter_by_height(formats: list[dict], cap: int | None = None, relaxed: bool = False) -> list[dict]:
     """Keep audio always; keep video only when its height is known and <= cap.
@@ -120,14 +108,12 @@ def filter_by_height(formats: list[dict], cap: int | None = None, relaxed: bool 
             kept.append(fmt)
     return kept
 
-
 def _to_int(value) -> int | None:
     try:
         number = int(float(value))
         return number if number > 0 else None
     except (TypeError, ValueError):
         return None
-
 
 def normalize_item(provider: str, index: int, item: dict, *, wrap_vidsnap: bool = False,
                    default_kind: str | None = None) -> dict | None:
@@ -166,7 +152,6 @@ def normalize_item(provider: str, index: int, item: dict, *, wrap_vidsnap: bool 
         "url": url,
     }
 
-
 def _sort_formats(formats: list[dict]) -> list[dict]:
     order = {"progressive": 0, "audio": 1, "video": 2}
     seen, unique = set(), []
@@ -177,9 +162,6 @@ def _sort_formats(formats: list[dict]) -> list[dict]:
         unique.append(fmt)
     unique.sort(key=lambda f: (order.get(f["kind"], 3), -_height(f["quality"]), -(f["bitrate"] or 0)))
     return unique[:MAX_FORMATS]
-
-
-# ------------------------------------------------------------------------ providers
 
 def _get_json(url: str, params: dict | None = None):
     session = requests.Session()
@@ -207,7 +189,6 @@ def _get_json(url: str, params: dict | None = None):
     finally:
         session.close()
 
-
 def _toshiro(video_id: str, normalized: str) -> dict:
     data = _get_json(TOSHIRO_URL, {"url": normalized})
     result = data.get("result") if isinstance(data, dict) else None
@@ -222,12 +203,11 @@ def _toshiro(video_id: str, normalized: str) -> dict:
             formats.append(fmt)
     return {"title": result.get("title"), "duration": _to_int(result.get("duration")), "formats": formats}
 
-
 def _vidsnap(video_id: str, normalized: str) -> dict:
     last: ProviderError | None = None
     for params in ({"id": video_id}, {"url": normalized}):
         if last is not None and last.reason == "timeout":
-            break                                   # a timeout will not fix itself on retry
+            break                                                                           
         try:
             data = _get_json(VIDSNAP_PARSE, params)
         except ProviderError as exc:
@@ -241,10 +221,8 @@ def _vidsnap(video_id: str, normalized: str) -> dict:
         last = ProviderError("empty")
     raise last or ProviderError("empty")
 
-
 def _instances(name: str) -> list[str]:
     return [v.strip().rstrip("/") for v in os.getenv(name, "").split(",") if v.strip().startswith("https://")]
-
 
 def _piped(video_id: str, normalized: str) -> dict:
     last: ProviderError | None = None
@@ -267,7 +245,6 @@ def _piped(video_id: str, normalized: str) -> dict:
             return {"title": data.get("title"), "duration": _to_int(data.get("duration")), "formats": formats}
         last = ProviderError("empty")
     raise last or ProviderError("not_configured")
-
 
 def _invidious(video_id: str, normalized: str) -> dict:
     last: ProviderError | None = None
@@ -294,9 +271,7 @@ def _invidious(video_id: str, normalized: str) -> dict:
         last = ProviderError("empty")
     raise last or ProviderError("not_configured")
 
-
 PROVIDERS = {"toshiro": _toshiro, "vidsnap": _vidsnap, "piped": _piped, "invidious": _invidious}
-
 
 def _chain() -> list[str]:
     wanted = [n.strip().lower() for n in os.getenv("YT_PROVIDERS", "toshiro,vidsnap,piped,invidious").split(",")]
@@ -307,14 +282,10 @@ def _chain() -> list[str]:
         chain.remove("invidious")
     return chain or ["toshiro", "vidsnap"]
 
-
-# --------------------------------------------------------------- lookup with cooldown
-
 _lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="ytprov")
-_health: dict[str, list] = {}                       # provider -> [consecutive_failures, skip_until]
+_health: dict[str, list] = {}                                                                       
 _cache: dict[str, tuple[float, dict]] = {}
-
 
 def _record(name: str, ok: bool) -> None:
     with _lock:
@@ -326,13 +297,11 @@ def _record(name: str, ok: bool) -> None:
             if entry[0] >= COOLDOWN_AFTER:
                 entry[1] = time.monotonic() + COOLDOWN_SECONDS
 
-
 def _active(chain: list[str]) -> list[str]:
     now = time.monotonic()
     with _lock:
         ready = [n for n in chain if _health.get(n, [0, 0.0])[1] <= now]
-    return ready or chain                            # if all are cooling down, try anyway
-
+    return ready or chain                                                                 
 
 def _merge(successes) -> list[dict]:
     """Combine formats from every provider that answered; same kind+quality+type keeps the higher-priority one.
@@ -350,11 +319,10 @@ def _merge(successes) -> list[dict]:
     strict = filter_by_height(out, relaxed=False)
     if any(f["kind"] == "progressive" for f in strict):
         out = strict
-    else:                                   # no known-height progressive: accept unlabeled ones (toshiro)
+    else:                                                                                                 
         relaxed = filter_by_height(out, relaxed=True)
         out = relaxed if any(f["kind"] == "progressive" for f in relaxed) else strict
     return _sort_formats(out)
-
 
 def lookup(video_id: str, fresh: bool = False) -> dict:
     now = time.monotonic()
@@ -400,8 +368,8 @@ def lookup(video_id: str, fresh: bool = False) -> dict:
         if successes:
             merged = _merge(successes)
             if len(merged) >= MIN_FORMATS:
-                break                              # plenty of choices already
-            if grace_end is None:                  # few choices: wait briefly for the other providers
+                break                                                         
+            if grace_end is None:                                                                     
                 grace_end = time.monotonic() + GRACE
     if successes:
         for future in pending:
@@ -421,7 +389,7 @@ def lookup(video_id: str, fresh: bool = False) -> dict:
                 _cache.pop(min(_cache, key=lambda k: _cache[k][0]), None)
             _cache[video_id] = (time.monotonic(), value)
         return dict(value, cache="miss")
-    for future in pending:                       # still running at the deadline: give up on them
+    for future in pending:                                                                       
         future.cancel()
         _record(futures[future], False)
         failures.append({"provider": futures[future], "reason": "timeout"})
@@ -434,9 +402,6 @@ def lookup(video_id: str, fresh: bool = False) -> dict:
         504 if only_timeouts else 502, retry_after=3, details={"providers": failures},
     )
 
-
-# ------------------------------------------------------------------------- tokens
-
 def _secret() -> bytes:
     explicit = os.getenv("SIGNING_SECRET")
     if explicit:
@@ -444,14 +409,11 @@ def _secret() -> bytes:
     seed = "|".join(os.getenv(k, "") for k in ("VERCEL_PROJECT_ID", "VERCEL_GIT_REPO_ID", "VERCEL_ORG_ID")) or "yy-dev"
     return hashlib.sha256(("yy|" + seed).encode()).digest()
 
-
 def _b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
-
 def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
 
 def make_token(video_id: str, title: str, fmt: dict) -> str:
     payload = {"v": video_id, "i": fmt["id"], "p": fmt["provider"], "k": fmt["kind"], "q": fmt["quality"],
@@ -459,7 +421,6 @@ def make_token(video_id: str, title: str, fmt: dict) -> str:
     body = _b64(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode())
     sig = _b64(hmac.new(_secret(), body.encode(), hashlib.sha256).digest()[:18])
     return f"{body}.{sig}"
-
 
 def read_token(token: str | None) -> dict:
     try:
@@ -473,7 +434,6 @@ def read_token(token: str | None) -> dict:
     if payload.get("e", 0) < time.time():
         raise ApiError("link_expired", "انتهت صلاحية رابط التنزيل؛ اختر الجودة من جديد.", 410, retryable=False)
     return payload
-
 
 def match_format(formats: list[dict], wanted: dict) -> dict | None:
     """Pick the same format after a refresh: same id, else same kind+quality, else nearest height."""
@@ -489,10 +449,8 @@ def match_format(formats: list[dict], wanted: dict) -> dict | None:
         return min(same_kind, key=lambda f: abs(_height(f["quality"]) - target))
     return formats[0] if formats else None
 
-
 _EXT = {"video/mp4": "mp4", "video/webm": "webm", "video/3gpp": "3gp", "audio/mp4": "m4a",
         "audio/webm": "webm", "audio/mpeg": "mp3", "audio/ogg": "ogg"}
-
 
 def file_info(title: str, fmt_like: dict) -> dict:
     mime = fmt_like.get("m") or fmt_like.get("mime") or "video/mp4"

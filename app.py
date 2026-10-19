@@ -29,13 +29,11 @@ app.json.ensure_ascii = False
 app.json.sort_keys = False
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024
 
-
 def _int_env(name: str, default: int) -> int:
     try:
         return max(0, int(os.getenv(name, str(default))))
     except (TypeError, ValueError):
         return default
-
 
 VERSION = "2"
 RATE_LIMIT = _int_env("RATE_LIMIT_PER_MIN", 60)
@@ -51,18 +49,15 @@ _BUCKETS: dict[tuple[str, str], tuple[float, float]] = {}
 _BUCKET_LOCK = threading.Lock()
 _BATCH_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="batch")
 
-
 def _safe_request_id(value: str | None) -> str:
     value = re.sub(r"[^A-Za-z0-9_-]", "", value or "")[:64]
     return value or uuid.uuid4().hex[:16]
-
 
 def _client_ip() -> str:
     headers = request.headers
     return (headers.get("X-Vercel-Forwarded-For", "").split(",")[0].strip()
             or headers.get("X-Real-IP", "").strip()
             or request.remote_addr or "unknown")
-
 
 def _rate_check(kind: str, limit: int, cost: int = 1) -> None:
     if limit <= 0:
@@ -87,11 +82,9 @@ def _rate_check(kind: str, limit: int, cost: int = 1) -> None:
         _BUCKETS[key] = (tokens, now)
         g.rate_limit = (limit, int(tokens), reset)
 
-
 def _base_url() -> str:
     proto = request.headers.get("X-Forwarded-Proto", request.scheme).split(",")[0].strip()
     return f"{proto}://{request.host}"
-
 
 def _error_body(error: ApiError) -> dict:
     detail = {"code": error.code, "message": error.message, "retryable": error.retryable}
@@ -101,7 +94,6 @@ def _error_body(error: ApiError) -> dict:
         detail["details"] = error.details
     return {"ok": False, "error": detail, "request_id": g.get("request_id", "")}
 
-
 def _json(body: dict, status: int = 200, retry_after: int | None = None):
     response = jsonify(body)
     response.status_code = status
@@ -109,7 +101,6 @@ def _json(body: dict, status: int = 200, retry_after: int | None = None):
     if retry_after:
         response.headers["Retry-After"] = str(retry_after)
     return response
-
 
 def _public(url: str, media: dict, base_url: str | None = None) -> dict:
     base_url = base_url or _base_url()
@@ -126,14 +117,12 @@ def _public(url: str, media: dict, base_url: str | None = None) -> dict:
         "expires_in": CACHE_TTL_PUBLIC,
     }
 
-
 def _filename(media: dict) -> str:
     title = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(media.get("title") or "download")).strip(" .")[:120]
     ext = re.sub(r"[^A-Za-z0-9]", "", str(media.get("ext") or "mp4")) or "bin"
     name = f"{title or 'download'}.{ext}"
     ascii_name = re.sub(r"[^\x20-\x7e]", "_", name).replace('"', "'")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}"
-
 
 def _open_upstream(media: dict, range_header: str | None, method: str = "GET", timeout: tuple = (10, 35)):
     headers = dict(media.get("headers") or {})
@@ -167,7 +156,6 @@ def _open_upstream(media: dict, range_header: str | None, method: str = "GET", t
         session.close()
         raise
 
-
 def _stream(upstream, session):
     try:
         for chunk in upstream.iter_content(CHUNK_SIZE):
@@ -176,7 +164,6 @@ def _stream(upstream, session):
     finally:
         upstream.close()
         session.close()
-
 
 def _upstream_response(upstream, session, media: dict):
     """Turn an opened upstream response into a streamed attachment (GET) or headers only (HEAD)."""
@@ -198,13 +185,11 @@ def _upstream_response(upstream, session, media: dict):
         session.close()
     return response
 
-
 @app.before_request
 def _begin_request():
     g.request_id = _safe_request_id(request.headers.get("X-Request-Id"))
     g.started_at = time.perf_counter()
     g.rate_limit = None
-
 
 @app.after_request
 def _security_headers(response):
@@ -228,7 +213,6 @@ def _security_headers(response):
         response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - g.started_at) * 1000:.0f}"
     return response
 
-
 @app.errorhandler(ApiError)
 def _handle_api_error(error: ApiError):
     if error.upstream_status:
@@ -241,28 +225,23 @@ def _handle_api_error(error: ApiError):
                            error.upstream_status, host, error.code)
     return _json(_error_body(error), error.status, error.retry_after)
 
-
 @app.errorhandler(413)
 def _too_large(_error):
     error = ApiError("request_too_large", "حجم الطلب أكبر من الحد المسموح.", 413)
     return _json(_error_body(error), 413)
 
-
 @app.errorhandler(404)
 def _not_found(_error):
     return _json(_error_body(ApiError("not_found", "المسار غير موجود.", 404)), 404)
-
 
 @app.errorhandler(405)
 def _method_not_allowed(_error):
     return _json(_error_body(ApiError("method_not_allowed", "طريقة الطلب غير مدعومة.", 405)), 405)
 
-
 @app.errorhandler(Exception)
 def _unexpected(error):
     app.logger.error("[%s] unexpected exception type=%s", g.get("request_id"), type(error).__name__)
     return _json(_error_body(ApiError("internal", "حدث خطأ غير متوقع؛ أرسل رقم الطلب للدعم.", 500)), 500)
-
 
 @app.get("/api/v1/health")
 def health():
@@ -280,14 +259,12 @@ def health():
         },
     })
 
-
 @app.get("/api/v1/resolve")
 def api_resolve():
     _rate_check("resolve", RATE_LIMIT)
     url = clean_url(request.args.get("url"))
     media = resolve_media(url, fresh=request.args.get("fresh") == "1")
     return _json(_public(url, media))
-
 
 @app.get("/api/v1/youtube/formats")
 def api_youtube_formats():
@@ -322,7 +299,6 @@ def api_youtube_formats():
         "cache": found["cache"],
         "expires_in": yt.TOKEN_TTL,
     })
-
 
 @app.route("/api/v1/youtube/download", methods=["GET", "HEAD"])
 def api_youtube_download():
@@ -365,7 +341,6 @@ def api_youtube_download():
                            details={"first": first.code, "second": second.code}) from None
     return _upstream_response(upstream, session, media)
 
-
 def _ffmpeg_exe() -> str | None:
     """Locate ffmpeg: the static binary bundled by imageio-ffmpeg, else one on PATH."""
     try:
@@ -373,7 +348,6 @@ def _ffmpeg_exe() -> str | None:
         return imageio_ffmpeg.get_ffmpeg_exe()
     except (ImportError, RuntimeError):
         return shutil.which("ffmpeg")
-
 
 def _parse_time_param(name: str) -> float | None:
     """Parse '30', '0:30', '1:02:03' into seconds; reject NaN/Inf/negative."""
@@ -393,7 +367,6 @@ def _parse_time_param(name: str) -> float | None:
     if not math.isfinite(value) or value < 0:
         raise ApiError("invalid_time", f"قيمة {name} يجب أن تكون رقمًا موجبًا.", 400)
     return value
-
 
 @app.route("/api/v1/youtube/trim", methods=["GET", "HEAD"])
 def api_youtube_trim():
@@ -424,7 +397,7 @@ def api_youtube_trim():
         raise ApiError("ffmpeg_missing", "أداة ffmpeg غير متوفرة على الخادم.", 500)
 
     ext = "m4a" if "mp4" in (token.get("m") or "").lower() else "webm"
-    rid = uuid.uuid4().hex                      # never reuse the client-supplied request id for paths
+    rid = uuid.uuid4().hex                                                                            
     src = f"/tmp/yt_src_{rid}.bin"
     out = f"/tmp/yt_out_{rid}.{ext}"
 
@@ -455,7 +428,7 @@ def api_youtube_trim():
         args += ["-i", src]
         if end is not None:
             args += ["-t", f"{end - s:.3f}"]
-        if reencode:                            # webm cannot hold AAC
+        if reencode:                                                  
             args += ["-c:a", "aac", "-b:a", "192k"] if ext == "m4a" else ["-c:a", "libopus", "-b:a", "128k"]
         else:
             args += ["-c", "copy"]
@@ -471,7 +444,7 @@ def api_youtube_trim():
         tag = f"{s:g}s-{end:g}s" if end is not None else f"from {s:g}s"
         media_info = {"title": f"{token.get('t') or 'audio'} [{tag}]", "ext": ext}
         try:
-            os.remove(src)                      # the output stays until the generator has streamed it
+            os.remove(src)                                                                            
         except OSError:
             pass
 
@@ -495,17 +468,17 @@ def api_youtube_trim():
         _cleanup()
         raise
 
-
 @app.get("/")
 def index_page():
-    """Local development only; on Vercel the static public/ files are served by the edge."""
     return send_from_directory(PUBLIC_DIR, "index.html")
 
+@app.get("/styles.css")
+def styles_page():
+    return send_from_directory(PUBLIC_DIR, "styles.css", mimetype="text/css")
 
 @app.get("/img/<path:name>")
 def static_img(name: str):
     return send_from_directory(os.path.join(PUBLIC_DIR, "img"), name)
-
 
 def _batch_one(index: int, raw: object, base_url: str) -> tuple[int, dict]:
     try:
@@ -519,7 +492,6 @@ def _batch_one(index: int, raw: object, base_url: str) -> tuple[int, dict]:
     except Exception:
         return index, {"ok": False, "input": raw if isinstance(raw, str) else None,
                        "error": {"code": "internal", "message": "تعذر معالجة هذا الرابط."}}
-
 
 @app.post("/api/v1/batch")
 def api_batch():
@@ -550,7 +522,6 @@ def api_batch():
         index, item = future.result()
         results[index] = item
     return _json({"ok": True, "count": len(results), "results": results})
-
 
 @app.route("/api/v1/download", methods=["GET", "HEAD"])
 def api_download():
@@ -593,7 +564,6 @@ def api_download():
         raise
 
     return _upstream_response(upstream, session, media)
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")), threaded=True)

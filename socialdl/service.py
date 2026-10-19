@@ -9,13 +9,11 @@ from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as Futur
 from .errors import ApiError
 from .extractor import extract_media
 
-
 def _int_env(name: str, default: int, minimum: int = 1) -> int:
     try:
         return max(minimum, int(os.getenv(name, str(default))))
     except (TypeError, ValueError):
         return default
-
 
 CACHE_TTL = min(300, _int_env("CACHE_TTL_SEC", 75))
 EXTRACT_TIMEOUT = min(10, _int_env("EXTRACT_TIMEOUT_SEC", 10))
@@ -29,13 +27,11 @@ _inflight: dict[str, Future] = {}
 _pool = ThreadPoolExecutor(max_workers=MAX_PENDING, thread_name_prefix="socialdl")
 _slots = threading.BoundedSemaphore(MAX_PENDING)
 
-
 def _work(url: str):
     try:
         return extract_media(url)
     finally:
         _slots.release()
-
 
 def resolve_media(url: str, fresh: bool = False) -> dict:
     """Resolve once per URL, cache briefly and share concurrent work per instance."""
