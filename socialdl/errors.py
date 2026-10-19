@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+
 class ApiError(Exception):
     def __init__(self, code: str, message: str, status: int = 400, retry_after: int | None = None,
                  upstream_status: int | None = None, details: dict | None = None,
@@ -14,11 +15,13 @@ class ApiError(Exception):
         self.retry_after = retry_after
         self.upstream_status = upstream_status
         self.details = details
-                                                                                                
+        # Additive contract field: tells clients whether repeating the same request can succeed.
         self.retryable = (status in (408, 425, 429, 500, 502, 503, 504)
                           if retryable is None else retryable)
 
+
 _HTTP_STATUS = re.compile(r"(?:HTTP\s+Error|HTTP\s+|status(?:\s+code)?\s*[:=]?\s*)\s*(\d{3})", re.IGNORECASE)
+
 
 def from_upstream_status(status: int) -> ApiError:
     if status == 402:
@@ -30,6 +33,7 @@ def from_upstream_status(status: int) -> ApiError:
     if status == 429:
         return ApiError("source_rate_limited", "حدّت المنصة من الطلبات مؤقتًا؛ انتظر ثم أعد المحاولة.", 502, retry_after=10, upstream_status=status)
     return ApiError("upstream_error", f"رفض مصدر الوسائط الطلب (HTTP {status}).", 502, upstream_status=status)
+
 
 def classify_extractor_error(exc: BaseException) -> ApiError:
     text = f"{type(exc).__name__}: {exc}"

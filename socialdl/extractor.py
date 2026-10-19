@@ -20,6 +20,7 @@ _META_URL = re.compile(
 )
 _FB_VIDEO_ID = re.compile(r'"(?:video_id|videoId)"\s*:\s*"(\d{6,})"')
 
+
 class _QuietLogger:
     def debug(self, _message):
         pass
@@ -32,6 +33,7 @@ class _QuietLogger:
 
     def error(self, _message):
         pass
+
 
 def _page_target(body: str, base: str) -> str | None:
     for match in _META_URL.finditer(body or ""):
@@ -48,6 +50,7 @@ def _page_target(body: str, base: str) -> str | None:
             return f"https://www.facebook.com/watch/?v={match.group(1)}"
     return None
 
+
 def _needs_expand(url: str) -> bool:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower().rstrip(".")
@@ -59,6 +62,7 @@ def _needs_expand(url: str) -> bool:
     return host_matches(host, SHORTENERS) or alias_host or (
         provider_for_host(host) is not None and share_path
     )
+
 
 def _canonical_share_target(url: str) -> str | None:
     """Resolve a supported share/short URL to yt-dlp's canonical media URL."""
@@ -72,10 +76,10 @@ def _canonical_share_target(url: str) -> str | None:
         return None
     return target
 
-def expand_url(url: str, max_hops: int = 4) -> str:
+
+def expand_url(url: str, max_hops: int = 6) -> str:
     """Expand common share/short links, validating every redirect target."""
     current = url
-    visited = {url}
     session = requests.Session()
     session.trust_env = False
     try:
@@ -97,7 +101,7 @@ def expand_url(url: str, max_hops: int = 4) -> str:
                 response = session.get(
                     current,
                     headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
-                    stream=True, allow_redirects=False, timeout=(2, 4),
+                    stream=True, allow_redirects=False, timeout=(5, 8),
                 )
             except requests.RequestException:
                 return current
@@ -123,13 +127,11 @@ def expand_url(url: str, max_hops: int = 4) -> str:
                 raise ApiError("forbidden_url", "رفضت الخدمة وجهة تحويل غير عامة أو غير آمنة.", 403)
             if candidate == current:
                 return current
-            if candidate in visited:
-                raise ApiError("redirect_loop", "اكتُشفت حلقة تحويل في رابط المشاركة.", 422)
-            visited.add(candidate)
             current = candidate
         return current
     finally:
         session.close()
+
 
 def _options() -> dict:
     return {
@@ -142,11 +144,12 @@ def _options() -> dict:
         "format": "b[protocol=https]/b[protocol=http]/ba[protocol=https]/ba[protocol=http]",
         "cachedir": False,
         "ignoreconfig": True,
-        "socket_timeout": 6,
-        "retries": 0,
-        "extractor_retries": 0,
+        "socket_timeout": 12,
+        "retries": 1,
+        "extractor_retries": 1,
         "color": "never",
     }
+
 
 def _safe_headers(headers: dict | None) -> dict[str, str]:
     blocked = {"cookie", "authorization", "proxy-authorization", "host", "content-length", "accept-encoding"}
@@ -155,6 +158,7 @@ def _safe_headers(headers: dict | None) -> dict[str, str]:
         if key.lower() not in blocked and isinstance(value, str) and len(value) < 2048:
             safe[key] = value
     return safe
+
 
 def extract_media(url: str) -> dict:
     """Return metadata and a short-lived CDN URL; never downloads or merges media."""

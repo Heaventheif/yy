@@ -13,6 +13,8 @@ YOUTUBE_DOMAINS = (
 )
 X_DOMAINS = ("x.com", "twitter.com", "t.co")
 
+# These platforms provide only scoped, authenticated download paths; this app
+# has no user OAuth store or platform credentials, so scraping is not enabled.
 OFFICIAL_API_ONLY = {
     "Pinterest": (("pinterest.com", "pin.it"), "Pinterest لا يوثق رابط فيديو خامًا في API العامة؛ يلزم تنزيله من واجهة Pinterest إذا أتاحه صاحبه."),
     "Snapchat": (("snapchat.com", "snap.com"), "تنزيل Snapchat يتطلب أصول Public Profile API مخوّلة عبر OAuth وقائمة سماح."),
@@ -36,12 +38,15 @@ MAX_URL_LENGTH = 2048
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _BARE_RE = re.compile(r"^[\w-]+(?:\.[\w-]+)+(?:/\S*)?$", re.UNICODE)
 
+
 def host_matches(host: str, domains: tuple[str, ...] | list[str]) -> bool:
     host = (host or "").lower().rstrip(".")
     return any(host == domain or host.endswith("." + domain) for domain in domains)
 
+
 def is_youtube_host(host: str) -> bool:
     return host_matches(host, YOUTUBE_DOMAINS)
+
 
 def provider_for_host(host: str) -> str | None:
     for name, domains in PLATFORMS.items():
@@ -49,11 +54,13 @@ def provider_for_host(host: str) -> str | None:
             return name
     return None
 
+
 def _official_api_only(host: str) -> tuple[str, str] | None:
     for name, (domains, message) in OFFICIAL_API_ONLY.items():
         if host_matches(host, domains):
             return name, message
     return None
+
 
 def _public_addresses(host: str) -> bool:
     try:
@@ -74,6 +81,7 @@ def _public_addresses(host: str) -> bool:
             return False
     return True
 
+
 def is_public_url(url: str) -> bool:
     """Reject non-HTTP URLs and any host resolving to a non-global IP."""
     try:
@@ -88,6 +96,7 @@ def is_public_url(url: str) -> bool:
         return _public_addresses(host)
     except (ValueError, OSError):
         return False
+
 
 def clean_url(raw: str | None) -> str:
     """Extract and validate one allowlisted public social-media URL."""
