@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote, urljoin, urlsplit
 
 import requests
-from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory
+from flask import Flask, abort, Response, g, jsonify, redirect, request, send_from_directory
 
 from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
 from socialdl import youtube as yt
@@ -121,6 +121,9 @@ def _public(url: str, media: dict, base_url: str | None = None) -> dict:
         "size": media["size"],
         "duration": media["duration"],
         "site": media["site"],
+        "audio": ({fmt: f"{base_url}/api/v1/audio?url={quote(url, safe='')}&format={fmt}" for fmt in ("mp3", "m4a")}
+                  if media.get("has_audio") else None),
+        "thumbnail": (f"{base_url}/api/v1/thumb?url={quote(url, safe='')}" if media.get("thumbnail") else None),
         "download": f"{base_url}/api/v1/download?url={quote(url, safe='')}",
         "expires_in": CACHE_TTL_PUBLIC,
     }
@@ -495,10 +498,140 @@ def api_youtube_trim():
         raise
 
 
+AUDIO_MAX_SOURCE = _int_env("AUDIO_MAX_SOURCE_MB", 150) * 1024 * 1024
+AUDIO_MAX_SECONDS = _int_env("AUDIO_MAX_SECONDS", 3600)
+_AUDIO_SLOTS = threading.BoundedSemaphore(_int_env("AUDIO_CONCURRENCY", 2))
+
+
+def _fetch_audio_source(url: str, dest: str, fresh: bool = False) -> dict:
+    """Download the smallest usable audio source (audio-only format when the site has one)."""
+    media = resolve_media(url, fresh=fresh)
+    if not media.get("has_audio"):
+        raise ApiError("no_audio", "هذا الرابط لا يحتوي مسارًا صوتيًا.", 422)
+    duration = media.get("duration")
+    if duration and duration > AUDIO_MAX_SECONDS:
+        raise ApiError("too_long", f"المقطع أطول من الحد المسموح للتحويل ({AUDIO_MAX_SECONDS // 60} دقيقة).", 413)
+    source = {"url": media.get("audio_url") or media["url"],
+              "headers": (media.get("audio_headers") if media.get("audio_url") else media.get("headers")) or {}}
+    upstream, session = _open_upstream(source, None, "GET", timeout=(10, 60))
+    try:
+        if upstream.status_code not in (200, 206):
+            if upstream.status_code in (401, 403, 404, 410) and not fresh:
+                raise _Stale()
+            raise from_upstream_status(upstream.status_code)
+        declared = int(upstream.headers.get("Content-Length") or 0)
+        if declared > AUDIO_MAX_SOURCE:
+            raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
+        written = 0
+        with open(dest, "wb") as fh:
+            for chunk in upstream.iter_content(CHUNK_SIZE):
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > AUDIO_MAX_SOURCE:
+                    raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
+                fh.write(chunk)
+    finally:
+        upstream.close()
+        session.close()
+    return media
+
+
+class _Stale(Exception):
+    pass
+
+
+@app.route("/api/v1/audio", methods=["GET", "HEAD"])
+def api_audio():
+    """Convert the audio track of a (non-YouTube) public link to MP3 or M4A and stream it."""
+    fmt = (request.args.get("format") or "mp3").lower()
+    if fmt not in ("mp3", "m4a"):
+        raise ApiError("invalid_format", "الصيغ المتاحة: mp3 أو m4a.", 400)
+    url = clean_url(request.args.get("url"))
+    if request.method == "HEAD":
+        return Response(b"", status=200, headers={"Cache-Control": "no-store"})
+    _rate_check("download", DL_RATE_LIMIT)
+    ffmpeg = _ffmpeg_exe()
+    if not ffmpeg:
+        raise ApiError("ffmpeg_missing", "أداة ffmpeg غير متوفرة على الخادم.", 500)
+    if not _AUDIO_SLOTS.acquire(blocking=False):
+        raise ApiError("busy", "الخادم مشغول بتحويلات أخرى؛ أعد المحاولة بعد قليل.", 503, retry_after=5)
+
+    rid = uuid.uuid4().hex
+    src, out = f"/tmp/au_src_{rid}.bin", f"/tmp/au_out_{rid}.{fmt}"
+
+    def _cleanup() -> None:
+        for path in (src, out):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    handed_over = False
+    try:
+        try:
+            media = _fetch_audio_source(url, src)
+        except _Stale:
+            media = _fetch_audio_source(url, src, fresh=True)
+        codec = ["-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "3"] if fmt == "mp3" else \
+                ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+        args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+                "-vn", "-map", "0:a:0", *codec, "-fs", str(80 * 1024 * 1024), out]
+        try:
+            subprocess.run(args, check=True, timeout=150, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except subprocess.TimeoutExpired:
+            raise ApiError("ffmpeg_timeout", "استغرق التحويل وقتًا أطول من المسموح.", 504, retry_after=5) from None
+        except subprocess.CalledProcessError:
+            raise ApiError("ffmpeg_failed", "تعذر استخراج الصوت من هذا الملف.", 422) from None
+        try:
+            os.remove(src)
+        except OSError:
+            pass
+        size = os.path.getsize(out)
+        name = _filename({"title": media.get("title"), "ext": fmt})
+
+        class _Stream:
+            """Streams the converted file; close() always frees the temp files and the slot."""
+            def __init__(self):
+                self.closed = False
+
+            def __iter__(self):
+                with open(out, "rb") as fh:
+                    while True:
+                        chunk = fh.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            def close(self):
+                if not self.closed:
+                    self.closed = True
+                    _cleanup()
+                    _AUDIO_SLOTS.release()
+
+        handed_over = True
+        return Response(_Stream(), mimetype="audio/mpeg" if fmt == "mp3" else "audio/mp4", headers={
+            "Content-Disposition": name, "Content-Length": str(size),
+            "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+        })
+    except BaseException:
+        _cleanup()
+        if not handed_over:
+            _AUDIO_SLOTS.release()
+        raise
+
+
 @app.get("/")
 def index_page():
     """Local development only; on Vercel the static public/ files are served by the edge."""
     return send_from_directory(PUBLIC_DIR, "index.html")
+
+
+@app.get("/<page>.html")
+def static_page(page: str):
+    if page not in ("privacy", "terms"):
+        abort(404)
+    return send_from_directory(PUBLIC_DIR, page + ".html")
 
 
 @app.get("/img/<path:name>")
@@ -549,6 +682,55 @@ def api_batch():
         index, item = future.result()
         results[index] = item
     return _json({"ok": True, "count": len(results), "results": results})
+
+
+THUMB_MAX_BYTES = 2 * 1024 * 1024
+
+
+@app.get("/api/v1/thumb")
+def api_thumb():
+    """Same-origin thumbnail for a media URL. The image URL comes from our own
+    extraction (never from the client), is re-validated per redirect hop, and
+    only small raster images are relayed."""
+    _rate_check("thumb", RATE_LIMIT * 4)
+    url = clean_url(request.args.get("url"))
+    thumb = resolve_media(url).get("thumbnail")
+    if not thumb:
+        raise ApiError("no_thumbnail", "لا توجد صورة مصغرة لهذا الرابط.", 404)
+    session = requests.Session()
+    session.trust_env = False
+    current = thumb
+    try:
+        for _ in range(4):
+            if not is_public_url(current):
+                raise ApiError("forbidden_url", "رابط الصورة غير عام.", 403)
+            upstream = session.get(current, stream=True, allow_redirects=False, timeout=(4, 6),
+                                   headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*"})
+            if upstream.status_code in (301, 302, 303, 307, 308) and upstream.headers.get("Location"):
+                current = urljoin(current, upstream.headers["Location"])
+                upstream.close()
+                continue
+            break
+        else:
+            raise ApiError("no_thumbnail", "تعذر جلب الصورة.", 404)
+        try:
+            ctype = (upstream.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if upstream.status_code != 200 or ctype not in ("image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"):
+                raise ApiError("no_thumbnail", "تعذر جلب الصورة.", 404)
+            data = b""
+            for chunk in upstream.iter_content(65536):
+                data += chunk
+                if len(data) > THUMB_MAX_BYTES:
+                    raise ApiError("no_thumbnail", "الصورة كبيرة جدًا.", 404)
+        finally:
+            upstream.close()
+    except requests.RequestException:
+        raise ApiError("no_thumbnail", "تعذر جلب الصورة.", 404) from None
+    finally:
+        session.close()
+    response = Response(data, mimetype=ctype)
+    response.headers["Cache-Control"] = "private, max-age=600"
+    return response
 
 
 @app.route("/api/v1/download", methods=["GET", "HEAD"])

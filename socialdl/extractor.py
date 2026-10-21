@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import html
 import re
+import threading
+import time
 from urllib.parse import urljoin, urlsplit
 
 import requests
 import yt_dlp
 
 from .errors import ApiError, classify_extractor_error
-from .platforms import SHORTENERS, clean_url, host_matches, is_public_url, is_youtube_host, provider_for_host
+from .platforms import ALIAS_HOSTS, SHORTENERS, normalize_url, unwrap_redirect, clean_url, host_matches, is_public_url, is_youtube_host, provider_for_host, site_allowed
 
 _BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -56,9 +58,7 @@ def _needs_expand(url: str) -> bool:
     host = (parts.hostname or "").lower().rstrip(".")
     path = parts.path.lower()
     share_path = (path.startswith(("/share", "/stories/", "/t/")) or "/s/" in path)
-    alias_host = host_matches(host, (
-        "fb.watch", "fb.me", "vm.tiktok.com", "vt.tiktok.com", "redd.it", "dai.ly",
-    ))
+    alias_host = host_matches(host, ALIAS_HOSTS)
     return host_matches(host, SHORTENERS) or alias_host or (
         provider_for_host(host) is not None and share_path
     )
@@ -77,8 +77,34 @@ def _canonical_share_target(url: str) -> str | None:
     return target
 
 
+_EXPAND_TTL = 600
+_EXPAND_MAX = 2000
+_expand_cache: dict[str, tuple[float, str]] = {}
+_expand_lock = threading.Lock()
+
+
+def _youtube_redirect(target: str) -> ApiError:
+    return ApiError("youtube_redirect", "الرابط يقود إلى YouTube؛ يُعالَج عبر مسار YouTube الخاص.", 422,
+                    details={"url": target}, retryable=False)
+
+
 def expand_url(url: str, max_hops: int = 6) -> str:
-    """Expand common share/short links, validating every redirect target."""
+    """Expand short/share links (cached); every redirect target is validated."""
+    now = time.monotonic()
+    with _expand_lock:
+        hit = _expand_cache.get(url)
+        if hit and now - hit[0] < _EXPAND_TTL:
+            return hit[1]
+    result = _expand_uncached(url, max_hops)
+    with _expand_lock:
+        if len(_expand_cache) >= _EXPAND_MAX:
+            for old in sorted(_expand_cache, key=lambda k: _expand_cache[k][0])[:_EXPAND_MAX // 4]:
+                _expand_cache.pop(old, None)
+        _expand_cache[url] = (time.monotonic(), result)
+    return result
+
+
+def _expand_uncached(url: str, max_hops: int = 6) -> str:
     current = url
     session = requests.Session()
     session.trust_env = False
@@ -86,14 +112,16 @@ def expand_url(url: str, max_hops: int = 6) -> str:
         for _ in range(max_hops):
             if not _needs_expand(current):
                 return current
-            if not is_youtube_host((urlsplit(current).hostname or "").lower()):
+            cur_host = (urlsplit(current).hostname or "").lower().rstrip(".")
+            # Plain shorteners only need their HTTP redirect (fast); yt-dlp is used for share/alias links.
+            if not host_matches(cur_host, SHORTENERS) and not is_youtube_host(cur_host):
                 candidate = _canonical_share_target(current)
                 if candidate:
                     parts = urlsplit(candidate)
                     host = (parts.hostname or "").lower().rstrip(".")
                     if is_youtube_host(host):
-                        raise ApiError("youtube_unsupported", "تنزيل YouTube غير مدعوم.", 422)
-                    if provider_for_host(host) is None or not is_public_url(candidate):
+                        raise _youtube_redirect(candidate)
+                    if not site_allowed(host) or not is_public_url(candidate):
                         raise ApiError("unsupported_redirect", "قاد رابط المشاركة إلى موقع غير مدعوم.", 422)
                     current = candidate
                     continue
@@ -101,7 +129,7 @@ def expand_url(url: str, max_hops: int = 6) -> str:
                 response = session.get(
                     current,
                     headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
-                    stream=True, allow_redirects=False, timeout=(5, 8),
+                    stream=True, allow_redirects=False, timeout=(3, 5),
                 )
             except requests.RequestException:
                 return current
@@ -109,7 +137,7 @@ def expand_url(url: str, max_hops: int = 6) -> str:
                 location = response.headers.get("Location")
                 if response.status_code in (301, 302, 303, 307, 308) and location:
                     candidate = urljoin(current, location)
-                elif response.status_code == 200:
+                elif response.status_code == 200 and not host_matches(cur_host, SHORTENERS):
                     body = response.raw.read(250_000, decode_content=True).decode("utf-8", "ignore")
                     candidate = _page_target(body, current) or current
                 else:
@@ -120,11 +148,12 @@ def expand_url(url: str, max_hops: int = 6) -> str:
             parts = urlsplit(candidate)
             host = (parts.hostname or "").lower().rstrip(".")
             if is_youtube_host(host):
-                raise ApiError("youtube_unsupported", "تنزيل YouTube غير مدعوم.", 422)
-            if provider_for_host(host) is None and not host_matches(host, SHORTENERS):
+                raise _youtube_redirect(candidate)
+            if not site_allowed(host):
                 raise ApiError("unsupported_redirect", "قاد رابط المشاركة إلى موقع غير مدعوم.", 422)
             if not is_public_url(candidate):
                 raise ApiError("forbidden_url", "رفضت الخدمة وجهة تحويل غير عامة أو غير آمنة.", 403)
+            candidate = normalize_url(unwrap_redirect(candidate))
             if candidate == current:
                 return current
             current = candidate
@@ -148,6 +177,8 @@ def _options() -> dict:
         "retries": 1,
         "extractor_retries": 1,
         "color": "never",
+        # Only dedicated site extractors: no "generic" crawler, never YouTube.
+        "allowed_extractors": ["default", "-generic", "-(?i:.*youtube.*)"],
     }
 
 
@@ -160,6 +191,40 @@ def _safe_headers(headers: dict | None) -> dict[str, str]:
     return safe
 
 
+def _pick_thumbnail(info: dict) -> str | None:
+    """Best http(s) thumbnail URL from yt-dlp metadata (never YouTube)."""
+    candidates = [info.get("thumbnail")]
+    thumbs = [t for t in (info.get("thumbnails") or []) if isinstance(t, dict) and t.get("url")]
+    thumbs.sort(key=lambda t: (t.get("preference") or 0, (t.get("width") or 0) * (t.get("height") or 0)))
+    candidates += [t["url"] for t in reversed(thumbs)]
+    for value in candidates:
+        if isinstance(value, str) and value.lower().startswith(("http://", "https://")) and len(value) < 2048:
+            if not is_youtube_host((urlsplit(value).hostname or "").lower()):
+                return value
+    return None
+
+
+_IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif", "avif", "heic", "bmp"}
+
+
+def _pick_audio_format(info: dict) -> dict | None:
+    """Best audio-only HTTP(S) format (capped near 192 kbps to keep conversion fast)."""
+    found = []
+    for f in info.get("formats") or []:
+        if not isinstance(f, dict) or not f.get("url"):
+            continue
+        if (f.get("vcodec") or "none") != "none" or (f.get("acodec") or "none") == "none":
+            continue
+        if (f.get("protocol") or "https").split("+", 1)[0] not in ("http", "https"):
+            continue
+        found.append(f)
+    if not found:
+        return None
+    rate = lambda f: f.get("abr") or f.get("tbr") or 0  # noqa: E731
+    within = [f for f in found if rate(f) <= 192]
+    return max(within, key=rate) if within else min(found, key=rate)
+
+
 def extract_media(url: str) -> dict:
     """Return metadata and a short-lived CDN URL; never downloads or merges media."""
     url = clean_url(url)
@@ -167,7 +232,7 @@ def extract_media(url: str) -> dict:
     host = (urlsplit(final_url).hostname or "").lower()
     if is_youtube_host(host):
         raise ApiError("youtube_unsupported", "تنزيل YouTube غير مدعوم.", 422)
-    if provider_for_host(host) is None:
+    if not site_allowed(host):
         raise ApiError("unsupported", "هذا الموقع غير مدعوم.", 422)
 
     try:
@@ -191,12 +256,20 @@ def extract_media(url: str) -> dict:
     if not is_public_url(media_url):
         raise ApiError("forbidden_url", "رفضت الخدمة رابط وسائط غير عام أو غير آمن.", 403)
 
+    ext = str(info.get("ext") or "mp4").lower()
+    audio_fmt = _pick_audio_format(info)
+    audio_url = audio_fmt["url"] if audio_fmt and is_public_url(audio_fmt["url"]) else None
+    has_audio = ext not in _IMAGE_EXTS and (info.get("acodec") != "none" or bool(audio_url))
     return {
+        "has_audio": has_audio,
+        "audio_url": audio_url,
+        "audio_headers": _safe_headers(audio_fmt.get("http_headers")) if audio_url else None,
         "title": info.get("title") or "media",
         "ext": info.get("ext") or "mp4",
         "url": media_url,
         "headers": _safe_headers(info.get("http_headers")),
         "size": info.get("filesize") or info.get("filesize_approx"),
         "duration": info.get("duration"),
+        "thumbnail": _pick_thumbnail(info),
         "site": extractor_key or provider_for_host(host) or "Social media",
     }

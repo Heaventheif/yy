@@ -6,6 +6,12 @@ from socialdl.platforms import clean_url, host_matches, is_public_url, is_youtub
 
 
 class PlatformTests(unittest.TestCase):
+    def setUp(self):
+        import socialdl.platforms as platforms
+        patcher = patch.object(platforms, "ALLOW_ALL_SITES", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_domain_matching_requires_label_boundary(self):
         self.assertTrue(host_matches("m.facebook.com", ("facebook.com",)))
         self.assertFalse(host_matches("notfacebook.com", ("facebook.com",)))
@@ -55,3 +61,84 @@ class PlatformTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenModeTests(unittest.TestCase):
+    def test_open_mode_allows_other_sites_but_never_youtube(self):
+        import socialdl.platforms as platforms
+        with patch.object(platforms, "ALLOW_ALL_SITES", True):
+            self.assertTrue(platforms.site_allowed("vimeo.com"))
+            self.assertTrue(platforms.site_allowed("example.org"))
+            self.assertFalse(platforms.site_allowed("m.youtube.com"))
+            self.assertFalse(platforms.site_allowed("youtu.be"))
+
+
+class YoutubeSeparationTests(unittest.TestCase):
+    """YouTube goes only through the external providers, never through yt-dlp."""
+
+    def test_ytdlp_options_exclude_youtube_and_generic(self):
+        import yt_dlp
+        from socialdl.extractor import _options
+        with yt_dlp.YoutubeDL(_options()) as ydl:
+            names = [ie.IE_NAME.lower() for ie in ydl._ies.values()]
+        self.assertFalse([n for n in names if n.startswith("youtube")])
+        self.assertNotIn("generic", names)
+
+    def test_extract_media_never_calls_ytdlp_for_youtube(self):
+        import socialdl.extractor as extractor
+        with patch.object(extractor.yt_dlp, "YoutubeDL") as ydl:
+            for url in ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ"):
+                with self.assertRaises(ApiError):
+                    extractor.extract_media(url)
+            ydl.assert_not_called()
+
+
+class LinkNormalizationTests(unittest.TestCase):
+    def setUp(self):
+        import socialdl.platforms as platforms
+        for target in ("is_public_url",):
+            patcher = patch.object(platforms, target, lambda url: True)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_tracking_params_and_fragment_removed(self):
+        url = clean_url("انظر https://www.tiktok.com/@a/video/1?utm_source=x&igsh=abc&lang=ar#frag، شكرا")
+        self.assertEqual(url, "https://www.tiktok.com/@a/video/1?lang=ar")
+
+    def test_redirect_wrappers_unwrapped_without_network(self):
+        wrapped = "https://l.facebook.com/l.php?u=https%3A%2F%2Fwww.dailymotion.com%2Fvideo%2Fx1abc&h=1"
+        self.assertEqual(clean_url(wrapped), "https://www.dailymotion.com/video/x1abc")
+
+    def test_wrapper_to_youtube_signals_youtube_route(self):
+        with self.assertRaises(ApiError) as raised:
+            clean_url("https://www.google.com/url?q=https://www.youtube.com/watch?v=dQw4w9WgXcQ&sa=D")
+        self.assertEqual(raised.exception.code, "youtube_redirect")
+        self.assertIn("youtube.com", raised.exception.details["url"])
+
+    def test_short_link_to_youtube_signals_youtube_route(self):
+        import socialdl.extractor as extractor
+
+        class Resp:
+            status_code = 301
+            headers = {"Location": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
+            def close(self): pass
+        extractor._expand_cache.clear()
+        with patch.object(extractor.requests.Session, "get", return_value=Resp()):
+            with self.assertRaises(ApiError) as raised:
+                extractor.expand_url("https://bit.ly/abc")
+        self.assertEqual(raised.exception.code, "youtube_redirect")
+
+    def test_expansion_is_cached(self):
+        import socialdl.extractor as extractor
+
+        class Resp:
+            status_code = 301
+            headers = {"Location": "https://vimeo.com/123"}
+            def close(self): pass
+        extractor._expand_cache.clear()
+        with patch.object(extractor, "is_public_url", lambda url: True), \
+                patch.object(extractor.requests.Session, "get", return_value=Resp()) as get:
+            first = extractor.expand_url("https://tinyurl.com/zz")
+            second = extractor.expand_url("https://tinyurl.com/zz")
+        self.assertEqual(first, second)
+        self.assertEqual(get.call_count, 1)  # the second call is served from the cache

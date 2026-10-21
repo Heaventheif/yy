@@ -5,33 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-  <meta name="description" content="ألصق رابط الفيديو واختر الجودة ثم نزّله">
-  <title>نزّل</title>
+  <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Yy أداة ويب لمعالجة روابط الوسائط العامة وعرض خيارات التنزيل المتاحة بسهولة.">
+  <title>Yy — تنزيل الوسائط من الروابط العامة</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap">
   <style>
     :root{
-      --paper:#fff; --ink:#000; --soft:#666; --line:#dcdcdc; --wash:#f2f2f2; --err:#c4170c;
+      --paper:#fff; --ink:#0f2a4a; --soft:#5b6b82; --line:#d8e0ec; --wash:#eef3fa; --err:#c4170c; --accent:#1d5fd1; --band:#f5f8fd;
       --ui:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
       --r:14px;
     }
     @media (prefers-color-scheme:dark){
-      :root{--paper:#000; --ink:#fff; --soft:#9b9b9b; --line:#2b2b2b; --wash:#151515; --err:#ff6b5e}
+      :root{--paper:#0b1220; --ink:#e8eefc; --soft:#9aa9c2; --line:#24324a; --wash:#142036; --err:#ff6b5e; --accent:#6ea2ff; --band:#0f1a2e}
     }
     *{box-sizing:border-box}
     html{-webkit-text-size-adjust:100%;background:var(--paper)}
-    body{margin:0;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;align-items:stretch;
-      background:var(--paper);color:var(--ink);font-family:var(--ui);line-height:1.5;
-      padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+    body{margin:0;min-height:100vh;min-height:100dvh;display:block;background:var(--paper);color:var(--ink);font-family:var(--ui);line-height:1.7;
+      padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
     button,input{font:inherit;color:inherit}
     .ic{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
     :focus-visible{outline:2px solid var(--ink);outline-offset:3px}
     .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
+
+    /* ---------- site chrome ---------- */
+    a{color:var(--accent)}
+    .wrap{max-width:960px;margin:0 auto;padding:0 20px}
+    .top{border-bottom:1px solid var(--line)}
+    .top .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+    .brand{font-weight:600;font-size:20px;color:var(--ink);text-decoration:none}
+    .top nav{display:flex;gap:18px;font-size:15px}
+    .top nav a{color:var(--soft);text-decoration:none}.top nav a:hover{color:var(--accent)}
+    .hero-sec{padding:56px 16px 64px;text-align:center;background:linear-gradient(180deg,var(--band),var(--paper))}
+    .hero-sec h1{margin:0 0 10px;font-size:clamp(26px,5vw,38px);line-height:1.3}
+    .hero-sec p.lead{margin:0 auto 28px;max-width:560px;color:var(--soft);font-size:17px}
+    .bar{border-color:var(--accent);background:var(--paper)}
+    .go{background:var(--accent);border-color:var(--accent);color:#fff}
+    .field:focus-within{box-shadow:inset 0 -3px 0 var(--accent)}
+    .hint{margin:14px 0 0;color:var(--soft);font-size:13px}
+    section.block{padding:52px 0;border-top:1px solid var(--line)}
+    section.block h2{margin:0 0 14px;font-size:24px}
+    section.block p{margin:0 0 12px;color:var(--soft);max-width:720px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:20px}
+    .card{padding:20px;border:1px solid var(--line);border-radius:var(--r);background:var(--band)}
+    .card h3{margin:0 0 6px;font-size:17px}.card p{margin:0;font-size:15px}
+    .steps{counter-reset:s;list-style:none;margin:20px 0 0;padding:0;display:grid;gap:14px}
+    .steps li{counter-increment:s;display:flex;gap:14px;align-items:flex-start;color:var(--soft)}
+    .steps li::before{content:counter(s);flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;font-weight:600}
+    .steps b{color:var(--ink)}
+    footer{border-top:1px solid var(--line);background:var(--band);padding:36px 0 28px}
+    footer .wrap{display:grid;gap:20px;justify-items:center;text-align:center}
+    .social{display:flex;gap:12px;list-style:none;margin:0;padding:0}
+    .social a{display:grid;place-items:center;width:44px;height:44px;border:1px solid var(--line);border-radius:50%;color:var(--ink);background:var(--paper)}
+    .social a:hover{border-color:var(--accent);color:var(--accent)}
+    .legal{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 20px;font-size:14px}
+    .legal a{color:var(--soft)}
+    footer small{color:var(--soft);font-size:13px;max-width:640px}
+
     /* ---------- the bar ---------- */
-    main{width:100%;max-width:560px;margin:0 auto;padding-bottom:10vh;min-width:0}
+    .hero{width:100%;max-width:560px;margin:0 auto;min-width:0}
     .bar{display:grid;grid-template-columns:minmax(0,1fr);border:2px solid var(--ink);border-radius:var(--r);overflow:hidden;
       transition:border-color .15s}
     .bar[data-state="error"]{border-color:var(--err)}
@@ -94,6 +128,14 @@
     .btn.block{width:100%;margin-top:14px}
     .btn.ghost{background:transparent;color:var(--ink)}
     .btn.sm{min-height:46px;padding:0 16px}
+    .thumb{position:relative;margin:4px 0 12px;border-radius:12px;overflow:hidden;background:var(--wash);aspect-ratio:16/9}
+    .thumb img{display:block;width:100%;height:100%;object-fit:cover}
+    .thumb:not([data-ok]) img{opacity:0}
+    .thumb[data-failed]{display:none}
+    .audio{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+    .audio p{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-weight:600;font-size:15px}
+    .audio .opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .audio small{display:block;margin-top:8px;color:var(--soft);font-size:12px}
     .stats{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;color:var(--soft);font-size:14px}
     .notice{margin:6px 0 0;font-size:15px;line-height:1.7;color:var(--err);overflow-wrap:anywhere}
     .diag{margin:10px 0 0;padding:0;list-style:none;font-size:13px;color:var(--soft)}
@@ -131,23 +173,68 @@
     </defs>
   </svg>
 
+  <header class="top"><div class="wrap">
+    <a class="brand" href="/">Yy</a>
+    <nav aria-label="التنقل"><a href="#about">عن الأداة</a><a href="#how">كيف تعمل</a><a href="/privacy.html">الخصوصية</a></nav>
+  </div></header>
+
   <main>
-    <h1 class="vh">نزّل</h1>
-    <form id="bar" class="bar" autocomplete="off" novalidate>
-      <div class="field">
-        <button id="paste" class="icon-btn" type="button" aria-label="لصق من الحافظة"><svg class="ic" aria-hidden="true"><use href="#i-paste"/></svg></button>
-        <label class="vh" for="url">الرابط</label>
-        <input id="url" name="url" type="url" inputmode="url" placeholder="ألصق الرابط هنا" required>
+    <section class="hero-sec">
+      <div class="hero">
+        <h1>Yy: تنزيل الوسائط من الروابط العامة</h1>
+        <p class="lead">ألصق رابط المحتوى الذي تملكه أو يحق لك تنزيله، اختر الجودة، ثم نزّله مباشرة بلا حساب ولا برامج إضافية.</p>
+        <form id="bar" class="bar" autocomplete="off" novalidate>
+          <div class="field">
+            <button id="paste" class="icon-btn" type="button" aria-label="لصق من الحافظة"><svg class="ic" aria-hidden="true"><use href="#i-paste"/></svg></button>
+            <label class="vh" for="url">الرابط</label>
+            <input id="url" name="url" type="url" inputmode="url" placeholder="ألصق الرابط هنا" required>
+          </div>
+          <button id="submit" class="go" type="submit"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg><span id="submit-text">تنزيل</span></button>
+        </form>
+        <p class="hint">يدعم مئات المواقع العامة عبر yt-dlp. لا يُدعم YouTube ولا المحتوى الخاص أو المحمي.</p>
       </div>
-      <button id="submit" class="go" type="submit"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg><span id="submit-text">تنزيل</span></button>
-    </form>
+    </section>
+
+    <section class="block" id="about"><div class="wrap">
+      <h2>ما هو Yy؟</h2>
+      <p>Yy أداة ويب تساعدك على استعراض خيارات الوسائط المتاحة من الروابط العامة وتنزيل ما لديك الحق في استخدامه.</p>
+      <div class="grid">
+        <div class="card"><h3>بدون حساب</h3><p>لا حاجة إلى التسجيل؛ ألصق الرابط وابدأ.</p></div>
+        <div class="card"><h3>يعمل على مختلف الأجهزة</h3><p>واجهة متجاوبة للاستخدام من الهاتف أو الحاسوب.</p></div>
+        <div class="card"><h3>خيارات تنزيل مرنة</h3><p>اختر من الصيغ والجودات التي يتيحها الرابط.</p></div>
+      </div>
+    </div></section>
+
+    <section class="block" id="how"><div class="wrap">
+      <h2>كيف تعمل؟</h2>
+      <ol class="steps">
+        <li><span><b>انسخ الرابط.</b> افتح المنشور أو الفيديو العام في المنصة وانسخ رابطه.</span></li>
+        <li><span><b>ألصقه واضغط «تنزيل».</b> يستخرج الخادم بيانات الملف المتاحة علنًا باستخدام yt-dlp.</span></li>
+        <li><span><b>اختر الجودة.</b> تظهر الصيغ المتاحة، وبنقرة واحدة يبدأ التنزيل إلى جهازك.</span></li>
+      </ol>
+    </div></section>
+
+    <section class="block" id="faq"><div class="wrap">
+      <h2>ملاحظات مهمة</h2>
+      <p>استخدم الأداة فقط للمحتوى الذي تملكه أو لديك إذن بتنزيله، والتزم بشروط المنصة المصدر وحقوق الناشر. لا نخزّن الملفات على خوادمنا، ولا نستخدم حسابات أو كوكيز لتجاوز القيود. للمزيد اقرأ <a href="/privacy.html">سياسة الخصوصية</a> و<a href="/terms.html">شروط الخدمة</a>.</p>
+      <p>للاستفسار أو الإبلاغ عن محتوى: <a href="mailto:sunken@inboxbear.com">sunken@inboxbear.com</a></p>
+    </div></section>
   </main>
+
+  <footer><div class="wrap">
+    <ul class="social" aria-label="مستودع المشروع">
+      <li><a href="https://github.com/Heaventheif/yt" rel="noopener noreferrer" aria-label="مستودع Yy على GitHub"><svg class="ic" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg></a></li>
+    </ul>
+    <nav class="legal" aria-label="روابط قانونية"><a href="/privacy.html">سياسة الخصوصية</a><a href="/terms.html">شروط الخدمة</a><a href="mailto:sunken@inboxbear.com">اتصل بنا</a></nav>
+    <small>© <span id="yr">2026</span> Yy. أداة مستقلة غير تابعة لأي منصة مذكورة. جميع العلامات التجارية ملك لأصحابها.</small>
+  </div></footer>
 
   <dialog id="dlg" aria-labelledby="dlg-title">
     <div class="sheet" id="view" data-tone=""></div>
   </dialog>
 
   <script>
+    document.getElementById('yr').textContent=new Date().getFullYear();
   (()=>{
     const $=s=>document.querySelector(s);
     const bar=$('#bar'),input=$('#url'),submit=$('#submit'),submitText=$('#submit-text'),pasteBtn=$('#paste'),dlg=$('#dlg'),view=$('#view');
@@ -226,13 +313,18 @@
         `${audio?`<button class="icon-btn" type="button" data-cut aria-label="اقتصاص" aria-expanded="false">${ic('cut')}</button>`:''}</div>`+
         `${audio?`<div class="trim" hidden><input type="text" inputmode="numeric" placeholder="من 0:30" aria-label="من" data-start><input type="text" inputmode="numeric" placeholder="إلى 1:00" aria-label="إلى" data-end><button class="btn sm" type="button" data-trim="${esc(f.download_url)}" data-title="${esc(f.__name)}">${ic('check')}</button></div>`:''}</li>`;
     };
+    const thumbHtml=src=>src?`<div class="thumb"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>`:'';
+    const wireThumb=()=>{const box=view.querySelector('.thumb');if(!box)return;const img=box.querySelector('img');
+      const ok=()=>box.setAttribute('data-ok','');const bad=()=>box.setAttribute('data-failed','');
+      img.complete?(img.naturalWidth?ok():bad()):(img.addEventListener('load',ok),img.addEventListener('error',bad))};
     const showFormats=data=>{
       const named=data.formats.map(f=>({...f,__name:data.title}));
       const by=k=>named.filter(f=>f.kind===k);
       const list=items=>items.length?`<ul class="list">${items.map(formatRow).join('')}</ul>`:'';
       const mute=by('video');
-      open(head(data.title||'')+list(by('progressive'))+list(by('audio'))+
+      open(head(data.title||'')+thumbHtml(data.thumbnail)+list(by('progressive'))+list(by('audio'))+
         (mute.length?`<details><summary>${ic('mute')}<span>${ar(mute.length)}</span></summary><ul class="list">${mute.map(formatRow).join('')}</ul></details>`:''));
+      wireThumb();
       view.querySelectorAll('.row').forEach(b=>b.addEventListener('click',()=>startDownload(b.dataset.href,b.dataset.name)));
       view.querySelectorAll('[data-cut]').forEach(btn=>btn.addEventListener('click',()=>{
         const panel=btn.closest('li').querySelector('.trim'),show=panel.hidden;
@@ -249,8 +341,14 @@
     };
     const showResult=data=>{
       const stats=[data.size?bytes(data.size):'',data.duration?clock(data.duration):'',data.ext?`<span dir="ltr">${esc(data.ext)}</span>`:''].filter(Boolean);
-      open(head(data.title||'الملف جاهز','file')+(stats.length?`<p class="stats">${stats.map(s=>`<span>${s}</span>`).join('')}</p>`:'')+
-        `<button class="btn block" type="button" id="go-download" data-autofocus>${ic('download')}تنزيل</button>`);
+      open(head(data.title||'الملف جاهز','file')+thumbHtml(data.thumbnail)+(stats.length?`<p class="stats">${stats.map(s=>`<span>${s}</span>`).join('')}</p>`:'')+
+        `<button class="btn block" type="button" id="go-download" data-autofocus>${ic('download')}تنزيل الفيديو</button>`+
+        (data.audio?`<div class="audio"><p>${ic('music')}<span>أو نزّله كملف صوتي فقط</span></p><div class="opts">`+
+          `<button class="btn ghost sm" type="button" data-audio="${esc(data.audio.mp3)}" data-ext="mp3">MP3</button>`+
+          `<button class="btn ghost sm" type="button" data-audio="${esc(data.audio.m4a)}" data-ext="m4a">M4A</button></div>`+
+          `<small>يُحوَّل الصوت على الخادم، وقد يستغرق ذلك بعض الوقت للمقاطع الطويلة.</small></div>`:''));
+      view.querySelectorAll('[data-audio]').forEach(b=>b.addEventListener('click',()=>startDownload(b.dataset.audio,(data.title||'audio')+' (صوت '+b.dataset.ext.toUpperCase()+')')));
+      wireThumb();
       $('#go-download').addEventListener('click',()=>startDownload(data.download,data.title||'download'));
     };
     const showError=(err,retry)=>{
@@ -314,11 +412,19 @@
       const value=findUrl(input.value);if(!value){input.focus();return}
       lastAction=run;setBusy(true);
       try{
-        const data=isYoutube(value)
-          ?await getJsonRetry('/api/v1/youtube/formats?url='+encodeURIComponent(value))
-          :await getJsonRetry('/api/v1/resolve?url='+encodeURIComponent(value));
+        let yt=isYoutube(value),data;
+        if(yt){data=await getJsonRetry('/api/v1/youtube/formats?url='+encodeURIComponent(value))}
+        else{
+          try{data=await getJsonRetry('/api/v1/resolve?url='+encodeURIComponent(value))}
+          catch(err){
+            /* a short link that turned out to be YouTube: hand it to the YouTube providers */
+            const yurl=err instanceof Fail&&err.code==='youtube_redirect'&&err.details&&err.details.url;
+            if(!yurl)throw err;
+            yt=true;data=await getJsonRetry('/api/v1/youtube/formats?url='+encodeURIComponent(yurl));
+          }
+        }
         setBusy(false);
-        isYoutube(value)?showFormats(data):showResult(data);
+        yt?showFormats(data):showResult(data);
       }catch(err){
         setBusy(false);bar.dataset.state='error';
         showError(err instanceof Fail?err:networkFail(err),run);
@@ -327,9 +433,12 @@
     bar.addEventListener('submit',e=>{e.preventDefault();run()});
     input.addEventListener('input',()=>{if(bar.dataset.state==='error')bar.dataset.state='idle'});
     dlg.addEventListener('close',()=>{if(bar.dataset.state!=='error')bar.dataset.state='idle'});
+    const looksLikeLink=v=>/^(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)+(?:[\/?#]\S*)?$/i.test(findUrl(v));
     pasteBtn.addEventListener('click',async()=>{
-      try{const text=await navigator.clipboard.readText();if(text){input.value=text.trim();input.focus()}}catch{input.focus()}
+      try{const text=await navigator.clipboard.readText();if(text){input.value=text.trim();input.focus();if(looksLikeLink(text))run()}}catch{input.focus()}
     });
+    /* pasting a link straight into the field checks it right away and shows the video/audio options */
+    input.addEventListener('paste',()=>setTimeout(()=>{if(!submit.disabled&&looksLikeLink(input.value))run()},0));
 
     const preset=new URLSearchParams(location.search).get('url');
     if(preset){input.value=preset;run()}
