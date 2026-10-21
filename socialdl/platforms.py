@@ -64,7 +64,8 @@ MAX_URL_LENGTH = 2048
 # Open mode: accept any public site that a dedicated yt-dlp extractor supports,
 # except YouTube. Set ALLOW_ALL_SITES=0 to go back to the strict allowlist.
 ALLOW_ALL_SITES = os.getenv("ALLOW_ALL_SITES", "1").strip().lower() not in ("0", "false", "no")
-_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+# ASCII-only: copied URLs are percent-encoded, while Arabic text glued to a link must not be swallowed.
+_URL_RE = re.compile(r"(?i:https?)://[^\s<>\"'\u0080-\U0010ffff]+")
 _BARE_RE = re.compile(r"^[\w-]+(?:\.[\w-]+)+(?:/\S*)?$", re.UNICODE)
 
 

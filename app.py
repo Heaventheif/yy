@@ -18,7 +18,7 @@ from flask import Flask, abort, Response, g, jsonify, redirect, request, send_fr
 
 from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
 from socialdl import youtube as yt
-from socialdl.platforms import PLATFORMS, clean_url, is_public_url
+from socialdl.platforms import PLATFORMS, clean_url, host_matches, is_public_url
 from socialdl.service import resolve_media
 
 os.environ.setdefault("HOME", "/tmp")
@@ -175,6 +175,83 @@ def _stream(upstream, session):
         for chunk in upstream.iter_content(CHUNK_SIZE):
             if chunk:
                 yield chunk
+    finally:
+        upstream.close()
+        session.close()
+
+
+# googlevideo throttles a single long GET to a trickle ("slow forever"); fetching the file in
+# small Range pieces (what yt-dlp does) keeps full speed. Each piece is validated like any hop.
+_THROTTLED_HOSTS = ("googlevideo.com",)
+RANGE_PIECE = 2 * 1024 * 1024
+
+
+def _is_throttled(url: str) -> bool:
+    return host_matches((urlsplit(url).hostname or "").lower(), _THROTTLED_HOSTS)
+
+
+def _ranged_pieces(url: str, headers: dict, total: int, start: int = 0, deadline: float | None = None):
+    """Yield the file in RANGE_PIECE-sized byte ranges (one retry per piece)."""
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        pos = start
+        while pos < total:
+            if deadline is not None and time.monotonic() > deadline:
+                raise ApiError("download_timeout", "تأخر المصدر في إرسال الملف.", 504, retry_after=3)
+            end = min(pos + RANGE_PIECE, total) - 1
+            data = None
+            for attempt in range(2):
+                if not is_public_url(url):
+                    raise ApiError("forbidden_url", "رفضت الخدمة وجهة تنزيل غير عامة أو غير آمنة.", 403)
+                try:
+                    piece = session.get(url, headers={**headers, "Range": f"bytes={pos}-{end}"},
+                                        stream=True, allow_redirects=False, timeout=(4, 12))
+                    try:
+                        if piece.status_code == 206 or (piece.status_code == 200 and pos == 0):
+                            data = piece.content[: (end - pos + 1) if piece.status_code == 206 else None]
+                    finally:
+                        piece.close()
+                except requests.RequestException:
+                    data = None
+                if data:
+                    break
+            if not data:
+                raise ApiError("download_timeout", "انقطع الاتصال بالمصدر أثناء التنزيل.", 502, retry_after=3)
+            yield data
+            pos += len(data)
+            if len(data) > end - (pos - len(data)) + 1:  # server ignored Range and sent the whole file
+                return
+    finally:
+        session.close()
+
+
+def _fetch_to_file(media: dict, dest: str, max_bytes: int, budget: float = 60.0) -> None:
+    """Download media.url to dest with an overall time budget and a size cap."""
+    deadline = time.monotonic() + budget
+    upstream, session = _open_upstream(media, None, "GET", timeout=(4, 12))
+    try:
+        if upstream.status_code not in (200, 206):
+            raise from_upstream_status(upstream.status_code)
+        total = int(upstream.headers.get("Content-Length") or 0)
+        if total > max_bytes:
+            raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
+        written = 0
+        with open(dest, "wb") as fh:
+            if total and _is_throttled(media["url"]):
+                upstream.close()
+                chunks = _ranged_pieces(media["url"], media.get("headers") or {}, total, deadline=deadline)
+            else:
+                chunks = upstream.iter_content(CHUNK_SIZE)
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
+                if time.monotonic() > deadline:
+                    raise ApiError("download_timeout", "تأخر المصدر في إرسال الملف؛ أعد المحاولة أو اختر جودة أخرى.", 504, retry_after=3)
+                fh.write(chunk)
     finally:
         upstream.close()
         session.close()
@@ -365,6 +442,19 @@ def api_youtube_download():
                            "تعذر بدء التنزيل من المصدر بعد محاولتين؛ جرّب جودة أخرى أو أعد المحاولة لاحقًا.",
                            502, retry_after=5, upstream_status=second.upstream_status or first.upstream_status,
                            details={"first": first.code, "second": second.code}) from None
+    total = int(upstream.headers.get("Content-Length") or 0)
+    if (request.method == "GET" and not range_header and upstream.status_code == 200
+            and total and _is_throttled(media["url"])):
+        upstream.close()
+        session.close()
+        response = Response(_ranged_pieces(media["url"], media["headers"], total), status=200,
+                            content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+                            direct_passthrough=True)
+        response.headers["Content-Length"] = str(total)
+        response.headers["Content-Disposition"] = _filename(media)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
     return _upstream_response(upstream, session, media)
 
 
@@ -439,17 +529,7 @@ def api_youtube_trim():
 
     try:
         media = {"url": token["u"], "headers": {"User-Agent": yt.UA}}
-        upstream, session = _open_upstream(media, None, "GET", timeout=(10, 60))
-        try:
-            if upstream.status_code not in (200, 206):
-                raise from_upstream_status(upstream.status_code)
-            with open(src, "wb") as fh:
-                for chunk in upstream.iter_content(CHUNK_SIZE):
-                    if chunk:
-                        fh.write(chunk)
-        finally:
-            upstream.close()
-            session.close()
+        _fetch_to_file(media, src, max_bytes=80 * 1024 * 1024, budget=60.0)
 
         args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
         if s > 0:
@@ -463,7 +543,7 @@ def api_youtube_trim():
             args += ["-c", "copy"]
         args += [out]
         try:
-            subprocess.run(args, check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            subprocess.run(args, check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except subprocess.TimeoutExpired:
             raise ApiError("ffmpeg_timeout", "تجاوز الاقتصاص المهلة القصوى.", 504, retry_after=5) from None
         except subprocess.CalledProcessError as exc:
@@ -513,27 +593,12 @@ def _fetch_audio_source(url: str, dest: str, fresh: bool = False) -> dict:
         raise ApiError("too_long", f"المقطع أطول من الحد المسموح للتحويل ({AUDIO_MAX_SECONDS // 60} دقيقة).", 413)
     source = {"url": media.get("audio_url") or media["url"],
               "headers": (media.get("audio_headers") if media.get("audio_url") else media.get("headers")) or {}}
-    upstream, session = _open_upstream(source, None, "GET", timeout=(10, 60))
     try:
-        if upstream.status_code not in (200, 206):
-            if upstream.status_code in (401, 403, 404, 410) and not fresh:
-                raise _Stale()
-            raise from_upstream_status(upstream.status_code)
-        declared = int(upstream.headers.get("Content-Length") or 0)
-        if declared > AUDIO_MAX_SOURCE:
-            raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
-        written = 0
-        with open(dest, "wb") as fh:
-            for chunk in upstream.iter_content(CHUNK_SIZE):
-                if not chunk:
-                    continue
-                written += len(chunk)
-                if written > AUDIO_MAX_SOURCE:
-                    raise ApiError("too_large", "حجم الملف المصدر أكبر من الحد المسموح للتحويل.", 413)
-                fh.write(chunk)
-    finally:
-        upstream.close()
-        session.close()
+        _fetch_to_file(source, dest, AUDIO_MAX_SOURCE, budget=60.0)
+    except ApiError as exc:
+        if exc.upstream_status in (401, 403, 404, 410) and not fresh:
+            raise _Stale() from None
+        raise
     return media
 
 

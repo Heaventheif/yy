@@ -54,25 +54,35 @@ def _page_target(body: str, base: str) -> str | None:
 
 
 def _needs_expand(url: str) -> bool:
+    """True only for short links and real share links (not ordinary video pages)."""
     parts = urlsplit(url)
     host = (parts.hostname or "").lower().rstrip(".")
     path = parts.path.lower()
-    share_path = (path.startswith(("/share", "/stories/", "/t/")) or "/s/" in path)
-    alias_host = host_matches(host, ALIAS_HOSTS)
-    return host_matches(host, SHORTENERS) or alias_host or (
-        provider_for_host(host) is not None and share_path
-    )
+    if host_matches(host, SHORTENERS) or host_matches(host, ALIAS_HOSTS):
+        return True
+    if host_matches(host, ("facebook.com", "instagram.com")):
+        return path.startswith("/share")
+    if host_matches(host, ("tiktok.com",)):
+        return path.startswith("/t/")
+    if host_matches(host, ("reddit.com",)):
+        return "/s/" in path
+    return False
 
 
 def _canonical_share_target(url: str) -> str | None:
-    """Resolve a supported share/short URL to yt-dlp's canonical media URL."""
+    """Ask yt-dlp's extractor for the canonical URL without processing formats (fast)."""
     try:
         with yt_dlp.YoutubeDL(_options()) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(url, download=False, process=False)
     except Exception:
         return None
-    target = info.get("webpage_url") if isinstance(info, dict) else None
-    if not isinstance(target, str) or target == url:
+    if not isinstance(info, dict):
+        return None
+    if info.get("_type") in ("url", "url_transparent"):
+        target = info.get("url") or info.get("webpage_url")
+    else:
+        target = info.get("webpage_url")
+    if not isinstance(target, str) or not target.lower().startswith(("http://", "https://")) or target == url:
         return None
     return target
 
@@ -104,7 +114,30 @@ def expand_url(url: str, max_hops: int = 6) -> str:
     return result
 
 
+def _http_hop(session, current: str, cur_host: str) -> str | None:
+    """One cheap request: follow a single redirect, or read og:url/canonical from a 200 page."""
+    try:
+        response = session.get(
+            current,
+            headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
+            stream=True, allow_redirects=False, timeout=(3, 5),
+        )
+    except requests.RequestException:
+        return None
+    try:
+        location = response.headers.get("Location")
+        if response.status_code in (301, 302, 303, 307, 308) and location:
+            return urljoin(current, location)
+        if response.status_code == 200 and not host_matches(cur_host, SHORTENERS):
+            body = response.raw.read(250_000, decode_content=True).decode("utf-8", "ignore")
+            return _page_target(body, current)
+        return None
+    finally:
+        response.close()
+
+
 def _expand_uncached(url: str, max_hops: int = 6) -> str:
+    """Resolve short/share links to the canonical video URL (HTTP redirect first, yt-dlp as fallback)."""
     current = url
     session = requests.Session()
     session.trust_env = False
@@ -113,40 +146,13 @@ def _expand_uncached(url: str, max_hops: int = 6) -> str:
             if not _needs_expand(current):
                 return current
             cur_host = (urlsplit(current).hostname or "").lower().rstrip(".")
-            # Plain shorteners only need their HTTP redirect (fast); yt-dlp is used for share/alias links.
-            if not host_matches(cur_host, SHORTENERS) and not is_youtube_host(cur_host):
-                candidate = _canonical_share_target(current)
-                if candidate:
-                    parts = urlsplit(candidate)
-                    host = (parts.hostname or "").lower().rstrip(".")
-                    if is_youtube_host(host):
-                        raise _youtube_redirect(candidate)
-                    if not site_allowed(host) or not is_public_url(candidate):
-                        raise ApiError("unsupported_redirect", "قاد رابط المشاركة إلى موقع غير مدعوم.", 422)
-                    current = candidate
-                    continue
-            try:
-                response = session.get(
-                    current,
-                    headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
-                    stream=True, allow_redirects=False, timeout=(3, 5),
-                )
-            except requests.RequestException:
-                return current
-            try:
-                location = response.headers.get("Location")
-                if response.status_code in (301, 302, 303, 307, 308) and location:
-                    candidate = urljoin(current, location)
-                elif response.status_code == 200 and not host_matches(cur_host, SHORTENERS):
-                    body = response.raw.read(250_000, decode_content=True).decode("utf-8", "ignore")
-                    candidate = _page_target(body, current) or current
-                else:
+            candidate = _http_hop(session, current, cur_host)
+            if not candidate or candidate == current:
+                # no usable redirect (login wall, JS page...): let the site extractor name the canonical URL
+                candidate = None if host_matches(cur_host, SHORTENERS) else _canonical_share_target(current)
+                if not candidate:
                     return current
-            finally:
-                response.close()
-
-            parts = urlsplit(candidate)
-            host = (parts.hostname or "").lower().rstrip(".")
+            host = (urlsplit(candidate).hostname or "").lower().rstrip(".")
             if is_youtube_host(host):
                 raise _youtube_redirect(candidate)
             if not site_allowed(host):

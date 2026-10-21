@@ -17,7 +17,7 @@ import re
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import requests
 
@@ -69,6 +69,12 @@ def extract_video_id(raw: str | None) -> str:
     if not host or not is_youtube_host(host):
         raise ApiError("invalid_youtube_url", "أدخل رابط YouTube صحيحًا.", 400)
     match = VIDEO_ID_RE.search(raw)
+    if not match:
+        # share wrappers: youtube.com/redirect?q=<url>, /attribution_link?u=</watch?v=ID>
+        query = dict(parse_qsl(urlsplit(raw).query))
+        inner = query.get("q") or query.get("u") or ""
+        if inner:
+            match = VIDEO_ID_RE.search(inner if "://" in inner else "https://www.youtube.com" + inner)
     if not match:
         raise ApiError("invalid_youtube_url", "تعذر استخراج معرّف فيديو YouTube من الرابط.", 400)
     return match.group(1)
