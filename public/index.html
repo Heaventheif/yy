@@ -317,14 +317,19 @@
     const wireThumb=()=>{const box=view.querySelector('.thumb');if(!box)return;const img=box.querySelector('img');
       const ok=()=>box.setAttribute('data-ok','');const bad=()=>box.setAttribute('data-failed','');
       img.complete?(img.naturalWidth?ok():bad()):(img.addEventListener('load',ok),img.addEventListener('error',bad))};
+    const audioBlock=data=>data.audio?`<div class="audio"><p>${ic('music')}<span>تنزيل كملف صوتي فقط</span></p><div class="opts">`+
+      `<button class="btn ghost sm" type="button" data-audio="${esc(data.audio.mp3)}" data-ext="mp3">MP3</button>`+
+      `<button class="btn ghost sm" type="button" data-audio="${esc(data.audio.m4a)}" data-ext="m4a">M4A</button></div>`+
+      `<small>يُحوَّل الصوت على الخادم، وقد يستغرق ذلك بعض الوقت للمقاطع الطويلة.</small></div>`:'';
     const showFormats=data=>{
       const named=data.formats.map(f=>({...f,__name:data.title}));
       const by=k=>named.filter(f=>f.kind===k);
       const list=items=>items.length?`<ul class="list">${items.map(formatRow).join('')}</ul>`:'';
       const mute=by('video');
-      open(head(data.title||'')+thumbHtml(data.thumbnail)+list(by('progressive'))+list(by('audio'))+
+      open(head(data.title||'')+thumbHtml(data.thumbnail)+list(by('progressive'))+audioBlock(data)+
         (mute.length?`<details><summary>${ic('mute')}<span>${ar(mute.length)}</span></summary><ul class="list">${mute.map(formatRow).join('')}</ul></details>`:''));
       wireThumb();
+      view.querySelectorAll('[data-audio]').forEach(b=>b.addEventListener('click',()=>startDownload(b.dataset.audio,(data.title||'audio')+' (صوت '+b.dataset.ext.toUpperCase()+')')));
       view.querySelectorAll('.row').forEach(b=>b.addEventListener('click',()=>startDownload(b.dataset.href,b.dataset.name)));
       view.querySelectorAll('[data-cut]').forEach(btn=>btn.addEventListener('click',()=>{
         const panel=btn.closest('li').querySelector('.trim'),show=panel.hidden;

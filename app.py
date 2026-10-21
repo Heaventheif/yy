@@ -182,8 +182,9 @@ def _stream(upstream, session):
 
 # googlevideo throttles a single long GET to a trickle ("slow forever"); fetching the file in
 # small Range pieces (what yt-dlp does) keeps full speed. Each piece is validated like any hop.
-_THROTTLED_HOSTS = ("googlevideo.com",)
+_THROTTLED_HOSTS = ("googlevideo.com", "vidsnap.app")
 RANGE_PIECE = 2 * 1024 * 1024
+RANGE_PARALLEL = max(1, min(8, _int_env("RANGE_PARALLEL", 4)))
 
 
 def _is_throttled(url: str) -> bool:
@@ -191,38 +192,85 @@ def _is_throttled(url: str) -> bool:
 
 
 def _ranged_pieces(url: str, headers: dict, total: int, start: int = 0, deadline: float | None = None):
-    """Yield the file in RANGE_PIECE-sized byte ranges (one retry per piece)."""
+    """Yield the file in order, fetching RANGE_PIECE-sized byte ranges RANGE_PARALLEL at a time.
+
+    One connection to googlevideo/proxies is slow; several parallel Range requests add up.
+    The first piece is fetched alone: if the server ignores Range it is streamed as-is."""
     session = requests.Session()
     session.trust_env = False
-    try:
-        pos = start
-        while pos < total:
-            if deadline is not None and time.monotonic() > deadline:
-                raise ApiError("download_timeout", "تأخر المصدر في إرسال الملف.", 504, retry_after=3)
-            end = min(pos + RANGE_PIECE, total) - 1
-            data = None
-            for attempt in range(2):
-                if not is_public_url(url):
-                    raise ApiError("forbidden_url", "رفضت الخدمة وجهة تنزيل غير عامة أو غير آمنة.", 403)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=RANGE_PARALLEL, pool_maxsize=RANGE_PARALLEL)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    def check_deadline() -> None:
+        if deadline is not None and time.monotonic() > deadline:
+            raise ApiError("download_timeout", "تأخر المصدر في إرسال الملف.", 504, retry_after=3)
+
+    def fetch(pos: int, end: int, first: bool = False):
+        """Return bytes for pos..end; for the first piece, may return an open 200 response instead."""
+        for _ in range(2):
+            if not is_public_url(url):
+                raise ApiError("forbidden_url", "رفضت الخدمة وجهة تنزيل غير عامة أو غير آمنة.", 403)
+            try:
+                piece = session.get(url, headers={**headers, "Range": f"bytes={pos}-{end}"},
+                                    stream=True, allow_redirects=False, timeout=(4, 12))
+            except requests.RequestException:
+                continue
+            if piece.status_code == 206:
                 try:
-                    piece = session.get(url, headers={**headers, "Range": f"bytes={pos}-{end}"},
-                                        stream=True, allow_redirects=False, timeout=(4, 12))
-                    try:
-                        if piece.status_code == 206 or (piece.status_code == 200 and pos == 0):
-                            data = piece.content[: (end - pos + 1) if piece.status_code == 206 else None]
-                    finally:
-                        piece.close()
+                    data = piece.content
                 except requests.RequestException:
-                    data = None
+                    data = b""
+                finally:
+                    piece.close()
                 if data:
-                    break
-            if not data:
-                raise ApiError("download_timeout", "انقطع الاتصال بالمصدر أثناء التنزيل.", 502, retry_after=3)
+                    return data[: end - pos + 1]
+            elif piece.status_code == 200 and first:
+                return piece                      # server ignored Range: caller streams it
+            else:
+                piece.close()
+        raise ApiError("download_timeout", "انقطع الاتصال بالمصدر أثناء التنزيل.", 502, retry_after=3)
+
+    executor = None
+    try:
+        check_deadline()
+        first_end = min(start + RANGE_PIECE, total) - 1
+        head = fetch(start, first_end, first=True)
+        if not isinstance(head, bytes):
+            try:
+                for chunk in head.iter_content(CHUNK_SIZE):
+                    check_deadline()
+                    if chunk:
+                        yield chunk
+            finally:
+                head.close()
+            return
+        yield head
+        pos = start + len(head)
+        if pos >= total:
+            return
+        ranges = []
+        while pos < total:
+            end = min(pos + RANGE_PIECE, total) - 1
+            ranges.append((pos, end))
+            pos = end + 1
+        executor = ThreadPoolExecutor(max_workers=RANGE_PARALLEL)
+        pending = []
+        queue = iter(ranges)
+        for rng in queue:
+            pending.append(executor.submit(fetch, *rng))
+            if len(pending) >= RANGE_PARALLEL * 2:
+                break
+        while pending:
+            check_deadline()
+            data = pending.pop(0).result()
+            nxt = next(queue, None)
+            if nxt:
+                pending.append(executor.submit(fetch, *nxt))
             yield data
-            pos += len(data)
-            if len(data) > end - (pos - len(data)) + 1:  # server ignored Range and sent the whole file
-                return
     finally:
+        if executor:
+            executor.shutdown(wait=False, cancel_futures=True)
         session.close()
 
 
@@ -398,11 +446,14 @@ def api_youtube_formats():
         "provider": fmt["provider"],
         "height": yt._height(fmt["quality"]) or None,
         "download_url": f"{base_url}/api/v1/youtube/download?t={yt.make_token(video_id, found['title'], fmt)}",
-    } for fmt in found["formats"]]
+    } for fmt in found["formats"] if fmt["kind"] != "audio"]   # audio is converted via ffmpeg (/api/v1/audio)
+    audio_links = {ext: f"{base_url}/api/v1/audio?url={quote(found['normalized'], safe='')}&format={ext}"
+                   for ext in ("mp3", "m4a")}
     return _json({
         "ok": True,
         "provider": found["provider"],
         "platform": "youtube",
+        "audio": audio_links,
         "videoId": video_id,
         "normalized": found["normalized"],
         "title": found["title"],
@@ -595,8 +646,59 @@ AUDIO_MAX_SECONDS = _int_env("AUDIO_MAX_SECONDS", 3600)
 _AUDIO_SLOTS = threading.BoundedSemaphore(_int_env("AUDIO_CONCURRENCY", 2))
 
 
-def _fetch_audio_source(url: str, dest: str, fresh: bool = False) -> dict:
+def _youtube_audio_candidates(formats: list[dict]) -> list[dict]:
+    """Smallest sources first: audio-only (about 128k preferred), then the lowest-quality progressive file."""
+    audio = [f for f in formats if f["kind"] == "audio"]
+    audio.sort(key=lambda f: ((f.get("bitrate") or 0) > 192_000, abs((f.get("bitrate") or 128_000) - 128_000)))
+    progressive = sorted((f for f in formats if f["kind"] == "progressive"),
+                         key=lambda f: (yt._height(f["quality"]) or 9999, f.get("size") or 10**12))
+    return (audio + progressive)[:4]
+
+
+def _fetch_youtube_audio_source(video_id: str, dest: str, fresh: bool = False) -> dict:
+    """Download a small YouTube source (provider link) to dest so ffmpeg can convert it like any other site."""
+    found = yt.lookup(video_id, fresh=fresh)
+    duration = found.get("duration")
+    if duration and duration > AUDIO_MAX_SECONDS:
+        raise ApiError("too_long", f"المقطع أطول من الحد المسموح للتحويل ({AUDIO_MAX_SECONDS // 60} دقيقة).", 413)
+    candidates = _youtube_audio_candidates(found["formats"])
+    if not candidates:
+        raise ApiError("no_audio", "لم يوفّر المزوّدون مسارًا صوتيًا لهذا الفيديو.", 422)
+    last: ApiError | None = None
+    stale = False
+    for fmt in candidates:
+        try:
+            _fetch_to_file({"url": fmt["url"], "headers": {"User-Agent": yt.UA}}, dest, AUDIO_MAX_SOURCE, budget=45.0)
+            return {"title": found.get("title") or "YouTube"}
+        except ApiError as exc:
+            last = exc
+            stale = stale or exc.upstream_status in (401, 403, 404, 410)
+            if exc.code in ("forbidden_url", "too_large"):
+                raise
+    if stale and not fresh:
+        raise _Stale()
+    raise last or ApiError("youtube_download_failed", "تعذر جلب مصدر الصوت من المزوّدين.", 502, retry_after=5)
+
+
+def _audio_target(raw: str | None) -> tuple[str, str | None]:
+    """Return (clean url, youtube video id or None); YouTube links skip clean_url's YouTube refusal."""
+    text = raw.strip() if isinstance(raw, str) else ""
+    match = re.search(r"https?://[^\s<>\"']+", text)
+    candidate = match.group(0) if match else text
+    try:
+        host = (urlsplit(candidate if "://" in candidate else "https://" + candidate).hostname or "").lower()
+    except ValueError:
+        host = ""
+    if host and yt.is_youtube_host(host):
+        video_id = yt.extract_video_id(candidate if "://" in candidate else "https://" + candidate)
+        return f"https://www.youtube.com/watch?v={video_id}", video_id
+    return clean_url(raw), None
+
+
+def _fetch_audio_source(url: str, dest: str, fresh: bool = False, youtube_id: str | None = None) -> dict:
     """Download the smallest usable audio source (audio-only format when the site has one)."""
+    if youtube_id:
+        return _fetch_youtube_audio_source(youtube_id, dest, fresh=fresh)
     media = resolve_media(url, fresh=fresh)
     if not media.get("has_audio"):
         raise ApiError("no_audio", "هذا الرابط لا يحتوي مسارًا صوتيًا.", 422)
@@ -620,11 +722,11 @@ class _Stale(Exception):
 
 @app.route("/api/v1/audio", methods=["GET", "HEAD"])
 def api_audio():
-    """Convert the audio track of a (non-YouTube) public link to MP3 or M4A and stream it."""
+    """Convert the audio track of a public link (YouTube included, via provider sources) to MP3 or M4A and stream it."""
     fmt = (request.args.get("format") or "mp3").lower()
     if fmt not in ("mp3", "m4a"):
         raise ApiError("invalid_format", "الصيغ المتاحة: mp3 أو m4a.", 400)
-    url = clean_url(request.args.get("url"))
+    url, youtube_id = _audio_target(request.args.get("url"))
     if request.method == "HEAD":
         return Response(b"", status=200, headers={"Cache-Control": "no-store"})
     _rate_check("download", DL_RATE_LIMIT)
@@ -647,9 +749,9 @@ def api_audio():
     handed_over = False
     try:
         try:
-            media = _fetch_audio_source(url, src)
+            media = _fetch_audio_source(url, src, youtube_id=youtube_id)
         except _Stale:
-            media = _fetch_audio_source(url, src, fresh=True)
+            media = _fetch_audio_source(url, src, fresh=True, youtube_id=youtube_id)
         codec = ["-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "3"] if fmt == "mp3" else \
                 ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
         args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", src,
