@@ -12,6 +12,9 @@ class ExtractorTests(unittest.TestCase):
         patcher = patch.object(extractor, "_http_hop", return_value=None)
         self.http_hop = patcher.start()
         self.addCleanup(patcher.stop)
+        fb = patch.object(extractor, "facebook_share_to_id_url", return_value=None)
+        fb.start()
+        self.addCleanup(fb.stop)
 
     @patch("socialdl.extractor.is_public_url", return_value=True)
     @patch("socialdl.extractor.yt_dlp.YoutubeDL")

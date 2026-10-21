@@ -368,6 +368,18 @@ def api_resolve():
     return _json(_public(url, media))
 
 
+@app.get("/api/v1/fb-id")
+def api_fb_id():
+    """Convert a Facebook share link to a standard ID URL (reel/ID or watch/?v=ID)."""
+    _rate_check("resolve", RATE_LIMIT)
+    url = clean_url(request.args.get("url"))
+    from socialdl.fbshare import facebook_share_to_id_url
+    converted = facebook_share_to_id_url(url)
+    if not converted:
+        raise ApiError("unsupported", "تعذر تحويل رابط المشاركة إلى رابط بمعرّف.", 422)
+    return _json({"input": url, "id_url": converted})
+
+
 @app.get("/api/v1/youtube/formats")
 def api_youtube_formats():
     """List downloadable YouTube formats (video <= MAX_VIDEO_HEIGHT, audio always). Links point back at this service."""

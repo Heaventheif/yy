@@ -5,12 +5,13 @@ import html
 import re
 import threading
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import requests
 import yt_dlp
 
 from .errors import ApiError, classify_extractor_error
+from .fbshare import facebook_share_to_id_url
 from .platforms import ALIAS_HOSTS, SHORTENERS, normalize_url, unwrap_redirect, clean_url, host_matches, is_public_url, is_youtube_host, provider_for_host, site_allowed
 
 _BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -21,6 +22,22 @@ _META_URL = re.compile(
     r'<link[^>]+rel=["\']canonical["\'][^>]*href=["\']([^"\']+)["\']', re.IGNORECASE,
 )
 _FB_VIDEO_ID = re.compile(r'"(?:video_id|videoId)"\s*:\s*"(\d{6,})"')
+_FB_PATH_ID = re.compile(r'facebook\.com\\?/(?:reel|watch\\?/\\?\?v=)(?:\\?/)?(\d{6,})|\\?/videos\\?/(\d{6,})')
+_FB_CRAWLER_UA = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+_FB_LOGIN_PATHS = ("/login", "/checkpoint", "/recover", "/two_step_verification")
+
+
+def _fb_clean_candidate(url: str | None) -> str | None:
+    """Facebook sends cloud IPs to /login/?next=<real url>: unwrap it, or drop it if there is no target."""
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if host_matches((parts.hostname or "").lower(), ("facebook.com",)) and parts.path.lower().startswith(_FB_LOGIN_PATHS):
+        nxt = dict(parse_qsl(parts.query)).get("next", "")
+        if nxt.startswith("/"):
+            nxt = urljoin(url, nxt)
+        return nxt if nxt.lower().startswith(("http://", "https://")) else None
+    return url
 
 
 class _QuietLogger:
@@ -50,6 +67,9 @@ def _page_target(body: str, base: str) -> str | None:
         match = _FB_VIDEO_ID.search(body or "")
         if match:
             return f"https://www.facebook.com/watch/?v={match.group(1)}"
+        match = _FB_PATH_ID.search(body or "")
+        if match:
+            return f"https://www.facebook.com/watch/?v={match.group(1) or match.group(2)}"
     return None
 
 
@@ -114,12 +134,12 @@ def expand_url(url: str, max_hops: int = 6) -> str:
     return result
 
 
-def _http_hop(session, current: str, cur_host: str) -> str | None:
+def _http_hop(session, current: str, cur_host: str, user_agent: str = _BROWSER_UA) -> str | None:
     """One cheap request: follow a single redirect, or read og:url/canonical from a 200 page."""
     try:
         response = session.get(
             current,
-            headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.8"},
+            headers={"User-Agent": user_agent, "Accept-Language": "en-US,en;q=0.8"},
             stream=True, allow_redirects=False, timeout=(3, 5),
         )
     except requests.RequestException:
@@ -139,6 +159,13 @@ def _http_hop(session, current: str, cur_host: str) -> str | None:
 def _expand_uncached(url: str, max_hops: int = 6) -> str:
     """Resolve short/share links to the canonical video URL (HTTP redirect first, yt-dlp as fallback)."""
     current = url
+    # Facebook share links: convert to a standard ID URL (reel/ID or watch/?v=ID) that yt-dlp accepts.
+    try:
+        id_url = facebook_share_to_id_url(url)
+    except Exception:
+        id_url = None
+    if id_url:
+        return id_url
     session = requests.Session()
     session.trust_env = False
     try:
@@ -146,7 +173,10 @@ def _expand_uncached(url: str, max_hops: int = 6) -> str:
             if not _needs_expand(current):
                 return current
             cur_host = (urlsplit(current).hostname or "").lower().rstrip(".")
-            candidate = _http_hop(session, current, cur_host)
+            candidate = _fb_clean_candidate(_http_hop(session, current, cur_host))
+            if (not candidate or candidate == current) and host_matches(cur_host, ("facebook.com",)):
+                # logged-out/cloud request got a login wall: the crawler UA is served og:url / video id
+                candidate = _fb_clean_candidate(_http_hop(session, current, cur_host, _FB_CRAWLER_UA))
             if not candidate or candidate == current:
                 # no usable redirect (login wall, JS page...): let the site extractor name the canonical URL
                 candidate = None if host_matches(cur_host, SHORTENERS) else _canonical_share_target(current)
