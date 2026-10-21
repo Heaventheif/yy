@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import shutil
@@ -18,6 +17,7 @@ from flask import Flask, abort, Response, g, jsonify, redirect, request, send_fr
 
 from socialdl.errors import ApiError, classify_extractor_error, from_upstream_status
 from socialdl import youtube as yt
+from socialdl.fbshare import facebook_share_to_id_url
 from socialdl.platforms import PLATFORMS, clean_url, host_matches, is_public_url
 from socialdl.service import resolve_media
 
@@ -421,7 +421,6 @@ def api_fb_id():
     """Convert a Facebook share link to a standard ID URL (reel/ID or watch/?v=ID)."""
     _rate_check("resolve", RATE_LIMIT)
     url = clean_url(request.args.get("url"))
-    from socialdl.fbshare import facebook_share_to_id_url
     converted = facebook_share_to_id_url(url)
     if not converted:
         raise ApiError("unsupported", "تعذر تحويل رابط المشاركة إلى رابط بمعرّف.", 422)
@@ -530,129 +529,25 @@ def _ffmpeg_exe() -> str | None:
         return shutil.which("ffmpeg")
 
 
-def _parse_time_param(name: str) -> float | None:
-    """Parse '30', '0:30', '1:02:03' into seconds; reject NaN/Inf/negative."""
-    raw = request.args.get(name)
-    if raw in (None, ""):
-        return None
-    parts = str(raw).strip().split(":")
-    try:
-        if len(parts) == 3:
-            value = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-        elif len(parts) == 2:
-            value = int(parts[0]) * 60 + float(parts[1])
-        else:
-            value = float(parts[0])
-    except ValueError:
-        raise ApiError("invalid_time", f"قيمة {name} غير صالحة؛ استخدم ثانية أو m:ss أو h:mm:ss.", 400) from None
-    if not math.isfinite(value) or value < 0:
-        raise ApiError("invalid_time", f"قيمة {name} يجب أن تكون رقمًا موجبًا.", 400)
-    return value
-
-
-@app.route("/api/v1/youtube/trim", methods=["GET", "HEAD"])
-def api_youtube_trim():
-    """Fetch an audio format, trim it with ffmpeg and stream the result.
-
-    Query: t=<audio token>  start=<sec>  end=<sec>  reencode=0|1. Only 'audio' tokens are accepted.
-    """
-    token = yt.read_token(request.args.get("t"))
-    if token.get("k") != "audio":
-        raise ApiError("not_audio", "هذا الرابط ليس لصيغة صوتية.", 400)
-
-    start = _parse_time_param("start")
-    end = _parse_time_param("end")
-    if start is None and end is None:
-        raise ApiError("invalid_request", "حدد start و/أو end للاقتصاص.", 400)
-    s = start or 0.0
-    if end is not None and end <= s:
-        raise ApiError("invalid_request", "end يجب أن يكون أكبر من start.", 400)
-    reencode = request.args.get("reencode") == "1"
-
-    if not request.headers.get("Range"):
-        _rate_check("download", DL_RATE_LIMIT)
-    if request.method == "HEAD":
-        return Response(b"", status=200, headers={"Cache-Control": "no-store"})
-
-    ffmpeg = _ffmpeg_exe()
-    if not ffmpeg:
-        raise ApiError("ffmpeg_missing", "أداة ffmpeg غير متوفرة على الخادم.", 500)
-
-    ext = "m4a" if "mp4" in (token.get("m") or "").lower() else "webm"
-    rid = uuid.uuid4().hex                      # never reuse the client-supplied request id for paths
-    src = f"/tmp/yt_src_{rid}.bin"
-    out = f"/tmp/yt_out_{rid}.{ext}"
-
-    def _cleanup() -> None:
-        for path in (src, out):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-    try:
-        media = {"url": token["u"], "headers": {"User-Agent": yt.UA}}
-        _fetch_to_file(media, src, max_bytes=80 * 1024 * 1024, budget=60.0)
-
-        args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
-        if s > 0:
-            args += ["-ss", f"{s:.3f}"]
-        args += ["-i", src]
-        if end is not None:
-            args += ["-t", f"{end - s:.3f}"]
-        if reencode:                            # webm cannot hold AAC
-            args += ["-c:a", "aac", "-b:a", "192k"] if ext == "m4a" else ["-c:a", "libopus", "-b:a", "128k"]
-        else:
-            args += ["-c", "copy"]
-        args += [out]
-        try:
-            subprocess.run(args, check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        except subprocess.TimeoutExpired:
-            raise ApiError("ffmpeg_timeout", "تجاوز الاقتصاص المهلة القصوى.", 504, retry_after=5) from None
-        except subprocess.CalledProcessError as exc:
-            snippet = (exc.stderr or b"").decode("utf-8", "replace")[:200]
-            raise ApiError("ffmpeg_failed", f"فشل الاقتصاص: {snippet}", 500) from None
-
-        tag = f"{s:g}s-{end:g}s" if end is not None else f"from {s:g}s"
-        media_info = {"title": f"{token.get('t') or 'audio'} [{tag}]", "ext": ext}
-        try:
-            os.remove(src)                      # the output stays until the generator has streamed it
-        except OSError:
-            pass
-
-        def _iter():
-            try:
-                with open(out, "rb") as fh:
-                    while True:
-                        chunk = fh.read(64 * 1024)
-                        if not chunk:
-                            break
-                        yield chunk
-            finally:
-                _cleanup()
-
-        return Response(_iter(), mimetype="audio/mp4" if ext == "m4a" else "audio/webm", headers={
-            "Content-Disposition": _filename(media_info),
-            "Cache-Control": "no-store",
-            "X-Accel-Buffering": "no",
-        })
-    except BaseException:
-        _cleanup()
-        raise
-
-
 AUDIO_MAX_SOURCE = _int_env("AUDIO_MAX_SOURCE_MB", 150) * 1024 * 1024
 AUDIO_MAX_SECONDS = _int_env("AUDIO_MAX_SECONDS", 3600)
 _AUDIO_SLOTS = threading.BoundedSemaphore(_int_env("AUDIO_CONCURRENCY", 2))
 
 
+YT_AUDIO_PREFERRED_BITRATE = 128_000   # a 128k source already covers a 192k MP3 target
+YT_AUDIO_MAX_BITRATE = 192_000         # above this the download is bigger than the conversion needs
+YT_AUDIO_MAX_SOURCES = 4
+YT_AUDIO_DOWNLOAD_BUDGET = 60.0       # seconds shared by all candidate sources (Vercel maxDuration is 300)
+
+
 def _youtube_audio_candidates(formats: list[dict]) -> list[dict]:
     """Smallest sources first: audio-only (about 128k preferred), then the lowest-quality progressive file."""
     audio = [f for f in formats if f["kind"] == "audio"]
-    audio.sort(key=lambda f: ((f.get("bitrate") or 0) > 192_000, abs((f.get("bitrate") or 128_000) - 128_000)))
+    audio.sort(key=lambda f: ((f.get("bitrate") or 0) > YT_AUDIO_MAX_BITRATE,
+                              abs((f.get("bitrate") or YT_AUDIO_PREFERRED_BITRATE) - YT_AUDIO_PREFERRED_BITRATE)))
     progressive = sorted((f for f in formats if f["kind"] == "progressive"),
                          key=lambda f: (yt._height(f["quality"]) or 9999, f.get("size") or 10**12))
-    return (audio + progressive)[:4]
+    return (audio + progressive)[:YT_AUDIO_MAX_SOURCES]
 
 
 def _fetch_youtube_audio_source(video_id: str, dest: str, fresh: bool = False) -> dict:
@@ -664,11 +559,15 @@ def _fetch_youtube_audio_source(video_id: str, dest: str, fresh: bool = False) -
     candidates = _youtube_audio_candidates(found["formats"])
     if not candidates:
         raise ApiError("no_audio", "لم يوفّر المزوّدون مسارًا صوتيًا لهذا الفيديو.", 422)
+    deadline = time.monotonic() + YT_AUDIO_DOWNLOAD_BUDGET
     last: ApiError | None = None
     stale = False
     for fmt in candidates:
+        remaining = deadline - time.monotonic()
+        if remaining < 3:
+            break
         try:
-            _fetch_to_file({"url": fmt["url"], "headers": {"User-Agent": yt.UA}}, dest, AUDIO_MAX_SOURCE, budget=45.0)
+            _fetch_to_file({"url": fmt["url"], "headers": {"User-Agent": yt.UA}}, dest, AUDIO_MAX_SOURCE, budget=remaining)
             return {"title": found.get("title") or "YouTube"}
         except ApiError as exc:
             last = exc

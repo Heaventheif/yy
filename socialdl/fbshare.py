@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import html
 import re
-from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import requests
 
@@ -51,6 +51,18 @@ def is_facebook_share(url: str) -> bool:
     return host_matches(host, ("facebook.com",)) and parts.path.lower().startswith("/share")
 
 
+def unwrap_login_wall(url: str) -> str | None:
+    """Facebook sends cloud IPs to /login/?next=<real url>: return that target.
+
+    Other URLs come back unchanged; a login URL without a usable target gives None."""
+    parts = urlsplit(url)
+    if not (host_matches((parts.hostname or "").lower(), ("facebook.com",))
+            and parts.path.lower().startswith(_LOGIN_PATHS)):
+        return url
+    target = urljoin(url, dict(parse_qsl(parts.query)).get("next", ""))
+    return target if target.lower().startswith(("http://", "https://")) and target != url else None
+
+
 def id_from_url(url: str) -> tuple[str, str] | None:
     """Return (video_id, kind) from any Facebook video URL form; kind is 'reel' or 'watch'."""
     try:
@@ -59,10 +71,10 @@ def id_from_url(url: str) -> tuple[str, str] | None:
         return None
     if not host_matches((parts.hostname or "").lower(), ("facebook.com", "fb.watch")) and parts.scheme.startswith("http"):
         return None
+    target = unwrap_login_wall(url)
+    if target != url:
+        return id_from_url(target) if target else None
     path, query = parts.path, dict(parse_qsl(parts.query))
-    if path.lower().startswith(_LOGIN_PATHS):
-        nxt = query.get("next", "")
-        return id_from_url(urljoin(url, unquote(nxt))) if nxt else None
     match = _PATH_REEL.search(path)
     if match:
         return match.group(1), "reel"

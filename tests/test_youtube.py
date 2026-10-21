@@ -214,59 +214,6 @@ class HeightFilterTests(unittest.TestCase):
         self.assertEqual([f["quality"] for f in out], ["480p"])
 
 
-class TrimTests(unittest.TestCase):
-    def setUp(self):
-        application.app.config["TESTING"] = True
-        self.client = application.app.test_client()
-
-    def audio_token(self, mime="audio/mp4"):
-        return yt.make_token("dQw4w9WgXcQ", "T", fmt(kind="audio", mime=mime, quality="medium"))
-
-    @patch("app._rate_check")
-    def test_rejects_non_audio_token(self, _rate):
-        tok = yt.make_token("dQw4w9WgXcQ", "T", fmt(kind="progressive"))
-        r = self.client.get(f"/api/v1/youtube/trim?t={tok}&start=10&end=20")
-        self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (400, "not_audio"))
-
-    @patch("app._rate_check")
-    def test_rejects_bad_times(self, _rate):
-        tok = self.audio_token()
-        for query, code in (("start=100&end=50", "invalid_request"), ("start=nan&end=5", "invalid_time"),
-                            ("start=-3", "invalid_time"), ("", "invalid_request")):
-            r = self.client.get(f"/api/v1/youtube/trim?t={tok}&{query}")
-            self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (400, code), query)
-
-    @patch("app._rate_check")
-    def test_head_does_no_work(self, _rate):
-        r = self.client.head(f"/api/v1/youtube/trim?t={self.audio_token()}&start=1&end=2")
-        self.assertEqual(r.status_code, 200)
-
-    @patch("app._rate_check")
-    def test_real_trim_with_ffmpeg(self, _rate):
-        import subprocess, tempfile, os
-        ffmpeg = application._ffmpeg_exe()
-        if not ffmpeg:
-            self.skipTest("ffmpeg unavailable")
-        src = os.path.join(tempfile.mkdtemp(), "tone.m4a")
-        subprocess.run([ffmpeg, "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=10", "-c:a", "aac", src], check=True)
-        body = open(src, "rb").read()
-
-        class Up(FakeUpstream):
-            def iter_content(self, _size):
-                yield body
-
-        for extra in ("", "&reencode=1"):
-            with patch("app._open_upstream", return_value=(Up(ctype="audio/mp4"), FakeSession())):
-                r = self.client.get(f"/api/v1/youtube/trim?t={self.audio_token()}&start=2&end=5{extra}")
-                data = r.get_data()
-            self.assertEqual(r.status_code, 200)
-            out = os.path.join(tempfile.mkdtemp(), "o.m4a")
-            open(out, "wb").write(data)
-            probe = subprocess.run([ffmpeg, "-i", out, "-f", "null", "-"], capture_output=True, text=True).stderr
-            self.assertRegex(probe, r"time=00:00:0[2-3]\.")
-        self.assertEqual([f for f in os.listdir("/tmp") if f.startswith("yt_")], [])
-
-
 if __name__ == "__main__":
     unittest.main()
 

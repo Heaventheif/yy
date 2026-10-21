@@ -38,3 +38,21 @@ class FbShareTests(unittest.TestCase):
 
     def test_never_follows_redirects_off_facebook(self):
         self.assertIsNone(_run([_Resp(302, "https://evil.example/x")] * 4))
+
+
+class LoginWallTests(unittest.TestCase):
+    def test_login_wall_next_is_unwrapped_once(self):
+        wall = "https://www.facebook.com/login/?next=https%3A%2F%2Fwww.facebook.com%2Freel%2F1080741757962951"
+        self.assertEqual(f.unwrap_login_wall(wall), "https://www.facebook.com/reel/1080741757962951")
+
+    def test_relative_next_is_resolved(self):
+        self.assertEqual(f.unwrap_login_wall("https://www.facebook.com/login/?next=%2Freel%2F1080741757962951"),
+                         "https://www.facebook.com/reel/1080741757962951")
+
+    def test_login_wall_without_target_gives_none(self):
+        self.assertIsNone(f.unwrap_login_wall("https://www.facebook.com/login/"))
+        self.assertIsNone(f.unwrap_login_wall("https://www.facebook.com/checkpoint/?next=javascript%3Aalert(1)"))
+
+    def test_ordinary_urls_are_unchanged(self):
+        for url in ("https://www.facebook.com/reel/1080741757962951", "https://example.com/login/?next=/x"):
+            self.assertEqual(f.unwrap_login_wall(url), url)
