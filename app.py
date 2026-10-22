@@ -20,6 +20,7 @@ from socialdl import youtube as yt
 from socialdl.fbshare import facebook_share_to_id_url
 from socialdl.platforms import PLATFORMS, clean_url, host_matches, is_public_url
 from socialdl.service import resolve_media
+from socialdl.tiktok import PROVIDER_ORDER as TIKTOK_PROVIDER_ORDER
 
 os.environ.setdefault("HOME", "/tmp")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/.cache")
@@ -400,6 +401,7 @@ def health():
         "version": VERSION,
         "youtube": "disabled",
         "youtube_via_providers": yt._chain(),
+        "tiktok_via_providers": list(TIKTOK_PROVIDER_ORDER),
         "platforms": list(PLATFORMS),
         "limits": {
             "resolve_per_minute": RATE_LIMIT,

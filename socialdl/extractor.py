@@ -13,6 +13,7 @@ import yt_dlp
 from .errors import ApiError, classify_extractor_error
 from .fbshare import facebook_share_to_id_url, unwrap_login_wall
 from .platforms import ALIAS_HOSTS, SHORTENERS, normalize_url, unwrap_redirect, clean_url, host_matches, is_public_url, is_youtube_host, provider_for_host, site_allowed
+from .tiktok import resolve_tiktok
 
 _BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -252,6 +253,8 @@ def extract_media(url: str) -> dict:
         raise ApiError("youtube_unsupported", "تنزيل YouTube غير مدعوم.", 422)
     if not site_allowed(host):
         raise ApiError("unsupported", "هذا الموقع غير مدعوم.", 422)
+    if host_matches(host, ("tiktok.com",)):
+        return resolve_tiktok(final_url)
 
     try:
         with yt_dlp.YoutubeDL(_options()) as ydl:
