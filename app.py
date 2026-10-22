@@ -124,7 +124,9 @@ def _public(url: str, media: dict, base_url: str | None = None) -> dict:
         "audio": ({fmt: f"{base_url}/api/v1/audio?url={quote(url, safe='')}&format={fmt}" for fmt in ("mp3", "m4a")}
                   if media.get("has_audio") else None),
         "thumbnail": (f"{base_url}/api/v1/thumb?url={quote(url, safe='')}" if media.get("thumbnail") else None),
-        "download": f"{base_url}/api/v1/download?url={quote(url, safe='')}",
+        # An HLS playlist is not a file: its "download" is the M4A conversion.
+        "download": (f"{base_url}/api/v1/audio?url={quote(url, safe='')}&format=m4a" if media.get("hls")
+                     else f"{base_url}/api/v1/download?url={quote(url, safe='')}"),
         "expires_in": CACHE_TTL_PUBLIC,
     }
 
@@ -534,7 +536,9 @@ AUDIO_MAX_SECONDS = _int_env("AUDIO_MAX_SECONDS", 3600)
 _AUDIO_SLOTS = threading.BoundedSemaphore(_int_env("AUDIO_CONCURRENCY", 2))
 
 
-YT_AUDIO_PREFERRED_BITRATE = 128_000   # a 128k source already covers a 192k MP3 target
+_HLS_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+YT_AUDIO_PREFERRED_BITRATE = 128_000  # a 128k source already covers a 192k MP3 target
 YT_AUDIO_MAX_BITRATE = 192_000         # above this the download is bigger than the conversion needs
 YT_AUDIO_MAX_SOURCES = 4
 YT_AUDIO_DOWNLOAD_BUDGET = 60.0       # seconds shared by all candidate sources (Vercel maxDuration is 300)
@@ -604,6 +608,8 @@ def _fetch_audio_source(url: str, dest: str, fresh: bool = False, youtube_id: st
     duration = media.get("duration")
     if duration and duration > AUDIO_MAX_SECONDS:
         raise ApiError("too_long", f"المقطع أطول من الحد المسموح للتحويل ({AUDIO_MAX_SECONDS // 60} دقيقة).", 413)
+    if media.get("hls"):
+        return media   # HLS playlist: ffmpeg reads it straight from the CDN (see api_audio)
     source = {"url": media.get("audio_url") or media["url"],
               "headers": (media.get("audio_headers") if media.get("audio_url") else media.get("headers")) or {}}
     try:
@@ -653,7 +659,14 @@ def api_audio():
             media = _fetch_audio_source(url, src, fresh=True, youtube_id=youtube_id)
         codec = ["-c:a", "libmp3lame", "-b:a", "192k", "-id3v2_version", "3"] if fmt == "mp3" else \
                 ["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
-        args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+        if media.get("hls"):
+            # Only web protocols: a hostile playlist must not make ffmpeg read local files or other schemes.
+            if not is_public_url(media["url"]):
+                raise ApiError("forbidden_url", "رفضت الخدمة رابط وسائط غير عام أو غير آمن.", 403)
+            ff_in = ["-protocol_whitelist", "https,tls,tcp,crypto", "-user_agent", _HLS_UA, "-i", media["url"]]
+        else:
+            ff_in = ["-i", src]
+        args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *ff_in,
                 "-vn", "-map", "0:a:0", *codec, "-fs", str(80 * 1024 * 1024), out]
         try:
             subprocess.run(args, check=True, timeout=150, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -821,6 +834,8 @@ def api_download():
         _rate_check("download", DL_RATE_LIMIT)
 
     media = resolve_media(url)
+    if media.get("hls"):   # playlist, not a file: serve the converted audio instead
+        return redirect(f"{_base_url()}/api/v1/audio?url={quote(url, safe='')}&format=m4a", 302)
     redirect_value = request.args.get("redirect")
     if (REDIRECT_DEFAULT if redirect_value is None else redirect_value == "1"):
         response = redirect(media["url"], 302)

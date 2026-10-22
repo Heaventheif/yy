@@ -185,7 +185,10 @@ def _options() -> dict:
         "skip_download": True,
         "noplaylist": True,
         "playlist_items": "1",
-        "format": "b[protocol=https]/b[protocol=http]/ba[protocol=https]/ba[protocol=http]",
+        # Direct files first; audio-only HLS (e.g. SoundCloud tracks with no progressive stream) is the
+        # last resort and is converted by ffmpeg in /api/v1/audio.
+        "format": ("b[protocol=https]/b[protocol=http]/ba[protocol=https]/ba[protocol=http]"
+                   "/ba[protocol=m3u8_native]/ba[protocol=m3u8]"),
         "cachedir": False,
         "ignoreconfig": True,
         "socket_timeout": 12,
@@ -262,7 +265,11 @@ def extract_media(url: str) -> dict:
         raise ApiError("no_single_file", "لا يتوفر ملف واحد جاهز؛ لا تدمج الخدمة مقاطع منفصلة.", 422)
 
     media_url = info.get("url")
-    if not media_url or (info.get("protocol") or "https").split("+", 1)[0] not in ("http", "https"):
+    protocol = (info.get("protocol") or "https").split("+", 1)[0]
+    # Audio-only HLS playlist (SoundCloud often has no progressive stream): kept only for the audio converter.
+    is_hls_audio = bool(media_url) and protocol in ("m3u8", "m3u8_native") \
+        and (info.get("vcodec") or "none") == "none" and (info.get("acodec") or "none") != "none"
+    if not media_url or (protocol not in ("http", "https") and not is_hls_audio):
         raise ApiError("no_single_file", "لم يتوفر رابط HTTP مباشر قابل للتنزيل.", 422)
     extractor_key = str(info.get("extractor_key") or "")
     media_host = (urlsplit(media_url).hostname or "").lower()
@@ -272,15 +279,21 @@ def extract_media(url: str) -> dict:
         raise ApiError("forbidden_url", "رفضت الخدمة رابط وسائط غير عام أو غير آمن.", 403)
 
     ext = str(info.get("ext") or "mp4").lower()
-    audio_fmt = _pick_audio_format(info)
-    audio_url = audio_fmt["url"] if audio_fmt and is_public_url(audio_fmt["url"]) else None
+    if is_hls_audio:
+        audio_fmt = {"url": media_url, "http_headers": info.get("http_headers")}
+        audio_url = media_url
+        ext = "m4a" if ext in ("m3u8", "aac", "mp4") else ext
+    else:
+        audio_fmt = _pick_audio_format(info)
+        audio_url = audio_fmt["url"] if audio_fmt and is_public_url(audio_fmt["url"]) else None
     has_audio = ext not in _IMAGE_EXTS and (info.get("acodec") != "none" or bool(audio_url))
     return {
+        "hls": is_hls_audio,
         "has_audio": has_audio,
         "audio_url": audio_url,
         "audio_headers": _safe_headers(audio_fmt.get("http_headers")) if audio_url else None,
         "title": info.get("title") or "media",
-        "ext": info.get("ext") or "mp4",
+        "ext": ext if is_hls_audio else (info.get("ext") or "mp4"),
         "url": media_url,
         "headers": _safe_headers(info.get("http_headers")),
         "size": info.get("filesize") or info.get("filesize_approx"),
